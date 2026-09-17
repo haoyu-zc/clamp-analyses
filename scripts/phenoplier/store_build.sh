@@ -1,51 +1,70 @@
 #!/usr/bin/env bash
 # Build a one-file HDF5 composite study store for one CLAMP model: the model's
 # .rds (Z matrix, hyperparameters, provenance) together with that model's GLS
-# results for the phenomexcan cohort. Wraps `phenoplier store build`
-# (phenoplier-cli #70).
+# results for one cohort. Wraps `phenoplier store build` (phenoplier-cli #70).
+# Driven by workflow/rules/phenoplier.smk; the project is the one run_gls.sh
+# created under the same --name, so the two stay in step.
 #
-# Like run_gls.sh, this finds the phenoplier-cli project directory by the name
-# derived from the model_key rather than reproducing the CLI's naming logic, so
-# the two stay in step.
+# Built atomically: to a .tmp, verified to open with h5py, then renamed, so a
+# failed build never leaves a partial .h5 for Snakemake to mistake for done.
 set -euo pipefail
 
-rds="$1"
-model_key="$2"
-conda_env="$3"
-cohort="$4"
-store_out="$5"
+usage() {
+  cat >&2 <<USAGE
+usage: $0 --rds <model.rds> --name <project> --store-out <out.h5> [--conda-env NAME] [--cohort NAME]
+Workspace: \$PHENOPLIER_HOME (default \$HOME/phenoplier).
+USAGE
+  exit 2
+}
 
-name="$(printf '%s' "$model_key" | tr '/' '_')"
+conda_env=phenoplier-cli-neo
+cohort=phenomexcan_rapid_gwas
+rds=""
+name=""
+store_out=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --rds) rds="$2"; shift 2 ;;
+    --name) name="$2"; shift 2 ;;
+    --store-out) store_out="$2"; shift 2 ;;
+    --conda-env) conda_env="$2"; shift 2 ;;
+    --cohort) cohort="$2"; shift 2 ;;
+    -h|--help) usage ;;
+    *) echo "unknown argument: $1" >&2; usage ;;
+  esac
+done
+[[ -n "$rds" && -n "$name" && -n "$store_out" ]] || usage
+[[ -f "$rds" ]] || { echo "model not found: $rds" >&2; exit 1; }
+
 workspace="${PHENOPLIER_HOME:-$HOME/phenoplier}"
+export PHENOPLIER_HOME="$workspace" PHENOPLIER_ROOT_DIR="$workspace"
 
+# shellcheck disable=SC1091
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$conda_env"
-# `phenoplier` shells out to bare executables; keep the env bin on PATH. Reading
-# the .rds via `store build --clamp-rds` needs R on PATH too (rpy2 -> R RHOME).
+# Reading the .rds via `store build --clamp-rds` needs R on PATH too (rpy2).
 export PATH="${CONDA_PREFIX:-}/bin:${PATH}"
 
-project_dir="$(
-  find "$workspace/projects" -maxdepth 1 -type d -name "*${name}*" \
-    -printf '%T@ %p\n' | sort -rn | head -n1 | cut -d' ' -f2-
-)"
-if [[ -z "$project_dir" ]]; then
-  echo "No project directory matching '*${name}*' found under $workspace/projects" >&2
-  exit 1
-fi
-
+project="$workspace/projects/$name"
 # Per-phenotype GLS results live under the cohort-named subdir; the combined
 # gls-summary lives one level up (store build auto-discovers it there).
-gls_dir="$project_dir/results/gls/phenoplier/${cohort}"
+gls_dir="$project/results/gls/phenoplier/${cohort}"
 if [[ ! -d "$gls_dir" ]]; then
-  echo "No GLS results dir at $gls_dir" >&2
+  echo "[ERROR] $name: no GLS results dir at $gls_dir" >&2
   exit 1
 fi
 
 mkdir -p "$(dirname "$store_out")"
-
+tmp="${store_out}.tmp.$$"
+rm -f "$tmp"
+echo "[store] $(date -Is)  $name -> $store_out"
 phenoplier store build \
-  --output "$store_out" \
+  --output "$tmp" \
   --cohort "$cohort" \
   --clamp-rds "$rds" \
   --gls-dir "$gls_dir" \
   --method-name CLAMP
+python -c "import h5py, sys; h5py.File(sys.argv[1], 'r').close()" "$tmp"
+mv -f "$tmp" "$store_out"
+echo "[done] $(date -Is)  $name"

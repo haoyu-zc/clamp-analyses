@@ -71,7 +71,7 @@ if [ ! -s "$summary" ]; then
   echo "[ERROR] $name: GLS produced no combined summary (run failed?). Refusing to build a store." >&2
   exit 1
 fi
-if ! python "$HERE/verify_summary.py" "$summary"; then
+if ! python "$HERE/../verify_summary.py" "$summary"; then
   echo "[ERROR] $name: summary incomplete/invalid. Refusing to build a store; requeue to finish step7." >&2
   exit 1
 fi

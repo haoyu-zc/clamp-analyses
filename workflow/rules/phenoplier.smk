@@ -1,261 +1,449 @@
-import re
+import os
 
 # ============================================================
-# STATUS (integration): this rule module is shipped UN-WIRED. It is NOT yet
-# `include:`d by workflow/Snakefile and no target here is on the `all` DAG, so
-# adding this file changes nothing until the maintainer wires it in. Wiring is
-# deliberately left to the maintainer so it can be aligned with `main` as it
-# stands today:
-#   - add `include: "rules/phenoplier.smk"` + a `configfile:` for
-#     workflow/config/phenoplier.yaml in workflow/Snakefile;
-#   - reconcile the dataset symbols below with the post-#36..#40 layout -- the
-#     old "finals" were restructured into archs4_canonical.smk (A4_SEEDS /
-#     A4_REF_DIR / A4_MODEL_NAME are gone), so `final_models_root` /
-#     `final_datasets` and the archs4 coverage/saturation model paths must be
-#     re-pointed at the current rules' outputs;
-#   - the per-model GLS summaries these rules produce are exactly the directory
-#     inputs Marc's workflow/rules/archs4_traits.smk (A4_TRAIT_CFG coverage /
-#     saturation / finals dirs) already consumes to build the trait-recovery
-#     reports -- this module is the upstream that produces them.
-# The as-run, multi-machine launchers (alpine/local/lab) and the live run log
-# are archived on branch `phenoplier-asrun-launchers`
-# (81de511c6ee22d5fbaff1ef107ac613a1ce5bfb9); this PR ships the pico-only
-# reproduction subset. See scripts/phenoplier/RUN_SUMMARY.md.
-# ============================================================
-# LV-trait association (GLS) via pivlab/phenoplier-cli, run against every
-# CLAMP model this repo already produces. phenoplier-cli ships its own
-# Snakemake pipeline on snakemake>=9/Python>=3.12, incompatible with this
-# repo's snakemake=8.*/Python 3.11 (envs/snakemake.yaml) -- it runs in its own
-# conda env (workflow/config/phenoplier.yaml: conda_env) via
-# scripts/phenoplier/run_gls.sh, one `phenoplier shortcut gls` invocation per
-# model, rather than as part of this Snakefile's own DAG.
+# LV-trait association (GLS) via pivlab/phenoplier-cli, run against the CLAMP
+# models the ARCHS4 coverage, saturation, final-model and canonical rules of
+# this workflow produce.
 #
-# Model paths below are read from config/helpers each dataset's own rule file
-# already defines (archs4.smk, archs4_coverage.smk, archs4_saturation.smk,
-# gtex.smk) -- nothing here duplicates a path that file owns.
+# This module is the UPSTREAM of archs4_traits.smk: every rule here writes one
+# per-model GLS summary into the archs4.yaml `traits.*` directory that
+# aggregate_archs4_{coverage,saturation}_traits scan, named the way
+# scripts/archs4/traits/aggregate_*_traits.R expect (cov_rs<f>_seed<s>,
+# sat_rs<f>_k<k>_seed<s>, final_<dataset>; the directory, not the filename,
+# says whether a file is CLAMPfull_bp or CLAMPbase).
 #
-# Depends on pivlab/phenoplier-cli#85 (open at the time this was written):
-# that PR fixes a GLS standard-error collapse that emits artifactual ~0
-# p-values for a handful of pathological LVs, specifically in the
-# `hall_coverage_rs*`-style sub-sampling models -- i.e. exactly the
-# archs4_coverage/archs4_saturation models this rule file runs against.
-# Until #85 merges, the coverage/saturation "traits recovered" curves this
-# produces can show the same spurious 10%/50% spikes that PR documents. See
-# scripts/phenoplier/setup_env.sh, which pins the install ref accordingly.
+# Every model path comes from the helpers/config of the rule file that builds
+# that model -- archs4_coverage.smk (a4_cov_*), archs4_saturation.smk
+# (a4_sat_*), archs4_canonical.smk (A4_CAN_*), archs4.yaml: final_models --
+# so a model is fitted, validated and published before GLS runs on it, and
+# nothing here names a model location of its own. Where the fitted model is a
+# directory() output (CLAMPfull_bp), the rule depends on that model's
+# validated.json exactly like the ORA rules do.
+#
+# phenoplier-cli ships its own Snakemake pipeline on snakemake>=9 /
+# Python>=3.12, incompatible with envs/snakemake.yaml (snakemake=8 / 3.11), so
+# it runs in its own conda env (phenoplier.yaml: conda_env) through
+# scripts/phenoplier/run_gls.sh, one workspace project per model, rather than
+# as rules of this DAG. run_gls.sh is the hardened path every model in
+# scripts/phenoplier/RUN_SUMMARY.md went through: register + init, pin the
+# step-6/7 pools, run (resume-safe), gate on a complete summary, publish.
+#
+# The GLS standard-error collapse that emitted artifactual ~0 p-values for a
+# handful of pathological LVs in the sub-sampling models is fixed upstream
+# (pivlab/phenoplier-cli#85, in v0.5.2); the completeness gate still refuses
+# any summary with a zero p-value.
 # ============================================================
 
 PHENOPLIER_CFG = config["phenoplier"]
-PHENOPLIER_OUT = PHENOPLIER_CFG["output_root"]
 PHENOPLIER_TARGET = config.get("phenoplier_target", PHENOPLIER_CFG["target"])
-PHENOPLIER_CLUSTER_CFG = PHENOPLIER_CFG["clusters"][PHENOPLIER_TARGET]
+PHENOPLIER_CLUSTER = PHENOPLIER_CFG["clusters"][PHENOPLIER_TARGET]
+PHENOPLIER_WORKERS = PHENOPLIER_CFG["workers"]
+PHENOPLIER_GLS_RES = PHENOPLIER_CFG["resources"]["gls"]
+PHENOPLIER_STORE_RES = PHENOPLIER_CFG["resources"]["store"]
+PHENOPLIER_REPORT = PHENOPLIER_CFG["report_root"]
+PHENOPLIER_TRAIT_FILTER = PHENOPLIER_CFG["trait_filter"]
+PHENOPLIER_EXPECTED_PHENOTYPES = int(
+    PHENOPLIER_CFG["expected_phenotypes"][PHENOPLIER_TRAIT_FILTER]
+)
 
-PHENOPLIER_MODELS = {}
+# Where the summaries land: the directories archs4_traits.smk consumes.
+A4_TRAIT_DIRS = A4_CFG["traits"]
+PHENOPLIER_COV_FULL_DIR = A4_TRAIT_DIRS["coverage"]["clampfull_bp_dir"]
+PHENOPLIER_COV_BASE_DIR = A4_TRAIT_DIRS["coverage"]["clampbase_dir"]
+PHENOPLIER_SAT_FULL_DIR = A4_TRAIT_DIRS["saturation"]["clampfull_bp_dir"]
+PHENOPLIER_SAT_BASE_DIR = A4_TRAIT_DIRS["saturation"]["clampbase_dir"]
+PHENOPLIER_FIN_FULL_DIR = A4_TRAIT_DIRS["finals"]["clampfull_bp_dir"]
+PHENOPLIER_FIN_BASE_DIR = A4_TRAIT_DIRS["finals"]["clampbase_dir"]
 
-# ARCHS4 final model: CLAMPfull per seed, CLAMPbase once (reference seed only
-# -- see archs4.smk's A4_REF_DIR comment: CLAMPbase is identical across seeds
-# at 100% of the compendium, so only one copy is kept).
-for _seed in A4_SEEDS:
-    PHENOPLIER_MODELS[f"archs4_final/seed{_seed}/CLAMPfull"] = (
-        f"{a4_seed_dir(_seed)}/{A4_MODEL_NAME}.rds"
-    )
-PHENOPLIER_MODELS["archs4_final/CLAMPbase"] = f"{A4_REF_DIR}/CLAMPbase.rds"
+# Saturation: only the ranks the trait-recovery report uses.
+PHENOPLIER_SAT_KS = [int(k) for k in PHENOPLIER_CFG["saturation_k_values"]]
+PHENOPLIER_SAT_K_PATTERN = "|".join(map(str, PHENOPLIER_SAT_KS))
+PHENOPLIER_SAT_CELLS = [
+    (fraction, k, seed)
+    for (fraction, k, seed) in A4_SAT_CELLS
+    if k in PHENOPLIER_SAT_KS
+]
 
-# ARCHS4 coverage: CLAMPfull_bp + CLAMPbase per (fraction, seed).
-for _fraction in A4_COV_LEVELS:
-    for _seed in a4_cov_seeds_for(_fraction):
-        PHENOPLIER_MODELS[f"archs4_coverage/archs4/rs{_fraction}/seed{_seed}/CLAMPfull"] = (
-            f"{a4_cov_model_dir('archs4', _fraction, _seed)}/{A4_COV_CFG['model_name']}.rds"
-        )
-        PHENOPLIER_MODELS[f"archs4_coverage/archs4/rs{_fraction}/seed{_seed}/CLAMPbase"] = (
-            f"{a4_cov_cell(_fraction, _seed)}/CLAMPbase.rds"
-        )
-
-# ARCHS4 coverage comparators (GTEx, Recount2 -- fit at rs100 only).
-for _dataset in A4_COV_COMPARATORS:
-    for _seed in a4_cov_seeds_for(100):
-        PHENOPLIER_MODELS[f"archs4_coverage/{_dataset}/seed{_seed}/CLAMPfull"] = (
-            f"{a4_cov_model_dir(_dataset, 100, _seed)}/{A4_COV_CFG['model_name']}.rds"
-        )
-    # CLAMPbase is a single pre-existing artifact per comparator dataset, not
-    # seed-varied -- see archs4.yaml: coverage.comparators.<dataset>.base.
-    # For recount2 this is this repo's only CLAMPbase model: there is no
-    # recount2.smk building it from raw data (flagged in the PR description).
-    PHENOPLIER_MODELS[f"archs4_coverage/{_dataset}/CLAMPbase"] = (
-        A4_COV_CFG["comparators"][_dataset]["base"]
-    )
-
-# ARCHS4 saturation: CLAMPfull_bp + CLAMPbase per (fraction, K, seed).
-for _fraction, _k, _seed in A4_SAT_CELLS:
-    PHENOPLIER_MODELS[f"archs4_saturation/rs{_fraction}/k{_k}/seed{_seed}/CLAMPfull"] = (
-        f"{a4_sat_model_dir(_fraction, _k, _seed)}/{A4_SAT_CFG['model_name']}.rds"
-    )
-    PHENOPLIER_MODELS[f"archs4_saturation/rs{_fraction}/k{_k}/seed{_seed}/CLAMPbase"] = (
-        a4_sat_base_rds(_fraction, _k, _seed)
-    )
-
-# GTEx production model (clamp_gtex in gtex.smk).
-PHENOPLIER_MODELS["gtex/CLAMPfull"] = f"{GTEX_PROD}/CLAMPfull.rds"
-PHENOPLIER_MODELS["gtex/CLAMPbase"] = f"{GTEX_PROD}/CLAMPbase.rds"
-
-# Final production models: one CLAMPfull_bp per dataset, built outside the
-# coverage/saturation matrix above (Marc's coverage-bp output tree). These are
-# the models item 0 of PR #28 runs GLS for. Paths come from phenoplier.yaml:
-# final_models_root, so a cluster that stages a local copy overrides only that
-# one key. The executed run (pre-register once, then GLS per model with the
-# local executor, then `store build`) is committed under
-# scripts/phenoplier/final_models/.
-PHENOPLIER_FINAL_ROOT = PHENOPLIER_CFG["final_models_root"]
-for _dataset in PHENOPLIER_CFG["final_datasets"]:
-    PHENOPLIER_MODELS[f"final/{_dataset}/CLAMPfull_bp"] = (
-        f"{PHENOPLIER_FINAL_ROOT}/{_dataset}/CLAMPfull_bp.rds"
-    )
-
-PHENOPLIER_MODEL_KEYS = list(PHENOPLIER_MODELS)
-PHENOPLIER_KEY_PATTERN = "|".join(re.escape(key) for key in PHENOPLIER_MODEL_KEYS)
+# Final models: the published full-data fits (archs4.yaml: final_models).
+# CLAMPfull_bp is published by publish_bp_model; CLAMPbase is a published
+# input like the canonical models are.
+A4_FINAL_MODELS = A4_CFG["final_models"]
+A4_FINAL_DATASETS = list(A4_COV_BP_DATASETS)
+A4_FINAL_DATASET_PATTERN = "|".join(A4_FINAL_DATASETS)
 
 
-def phenoplier_model_rds(wildcards):
-    return PHENOPLIER_MODELS[wildcards.model_key]
+def a4_final_bp_rds(dataset):
+    spec = A4_FINAL_MODELS["clampfull"]["bp"][dataset]
+    return f"{spec['root']}/{spec['rds']}"
 
 
-def phenoplier_keys(prefix):
-    return [key for key in PHENOPLIER_MODEL_KEYS if key.startswith(prefix)]
+def a4_final_base_rds(dataset):
+    spec = A4_FINAL_MODELS["clampbase"][dataset]
+    return f"{spec['root']}/{spec['rds']}"
 
 
-rule phenoplier_gls:
+def phenoplier_store_dir(summary_dir):
+    """Stores sit beside their summaries: <root>/summaries -> <root>/stores."""
+    return os.path.join(os.path.dirname(summary_dir), "stores")
+
+
+# Every summary each family produces. These lists are the inputs of
+# archs4_traits.smk's aggregate rules and of the convenience targets below.
+PHENOPLIER_COV_FULL = [
+    f"{PHENOPLIER_COV_FULL_DIR}/cov_rs{fraction}_seed{seed}.tsv.gz"
+    for fraction in A4_COV_LEVELS
+    for seed in a4_cov_seeds_for(fraction)
+]
+PHENOPLIER_COV_BASE = [
+    f"{PHENOPLIER_COV_BASE_DIR}/cov_rs{fraction}_seed{seed}.tsv.gz"
+    for fraction in A4_COV_LEVELS
+    for seed in a4_cov_seeds_for(fraction)
+]
+PHENOPLIER_SAT_FULL = [
+    f"{PHENOPLIER_SAT_FULL_DIR}/sat_rs{fraction}_k{k}_seed{seed}.tsv.gz"
+    for (fraction, k, seed) in PHENOPLIER_SAT_CELLS
+]
+PHENOPLIER_SAT_BASE = [
+    f"{PHENOPLIER_SAT_BASE_DIR}/sat_rs{fraction}_k{k}_seed{seed}.tsv.gz"
+    for (fraction, k, seed) in PHENOPLIER_SAT_CELLS
+]
+PHENOPLIER_FIN_FULL = [
+    f"{PHENOPLIER_FIN_FULL_DIR}/final_{dataset}.tsv.gz" for dataset in A4_FINAL_DATASETS
+]
+PHENOPLIER_FIN_BASE = [
+    f"{PHENOPLIER_FIN_BASE_DIR}/final_{dataset}.tsv.gz" for dataset in A4_FINAL_DATASETS
+]
+PHENOPLIER_CANONICAL = [
+    f"{A4_CAN_FINAL_ROOT}/{dataset}/traits/canon_{dataset}.tsv.gz"
+    for dataset in A4_CAN_COMPENDIA
+]
+PHENOPLIER_FIN_STORES = [
+    f"{phenoplier_store_dir(PHENOPLIER_FIN_FULL_DIR)}/final_{dataset}_{A4_COV_CFG['model_name']}.h5"
+    for dataset in A4_FINAL_DATASETS
+] + [
+    f"{phenoplier_store_dir(PHENOPLIER_FIN_BASE_DIR)}/final_{dataset}_CLAMPbase.h5"
+    for dataset in A4_FINAL_DATASETS
+]
+
+# One command for every GLS rule: the rules differ only in which model they
+# point run_gls.sh at (params.rds / params.name) and where the summary goes.
+# Everything else is workflow-wide config, baked in here once.
+PHENOPLIER_GLS_SHELL = "".join([
+    "bash {input.script} --rds {params.rds} --name {params.name} ",
+    "--summary-out {output.summary} --n-jobs {threads} ",
+    f"--conda-env {PHENOPLIER_CFG['conda_env']} ",
+    f"--namespace {PHENOPLIER_CFG['namespace']} ",
+    f"--cohort {PHENOPLIER_CFG['cohort']} ",
+    f"--lv-percentile {PHENOPLIER_CFG['lv_percentile']} ",
+    f"--trait-filter {PHENOPLIER_TRAIT_FILTER} ",
+    f"--expected-phenotypes {PHENOPLIER_EXPECTED_PHENOTYPES} ",
+    f"--executor {PHENOPLIER_CLUSTER['executor']} ",
+    f"--cluster '{PHENOPLIER_CLUSTER.get('cluster', '')}' ",
+    f"--workers-step6 {PHENOPLIER_WORKERS['step6']} ",
+    f"--blas-step6 {PHENOPLIER_WORKERS['blas_step6']} ",
+    f"--workers-step7 {PHENOPLIER_WORKERS['step7']} ",
+    f"--blas-step7 {PHENOPLIER_WORKERS['blas_step7']} ",
+    "> {log} 2>&1",
+])
+
+PHENOPLIER_STORE_SHELL = "".join([
+    "bash {input.script} --rds {params.rds} --name {params.name} ",
+    "--store-out {output.store} ",
+    f"--conda-env {PHENOPLIER_CFG['conda_env']} ",
+    f"--cohort {PHENOPLIER_CFG['cohort']} ",
+    "> {log} 2>&1",
+])
+
+
+# ============================================================
+# Step 1: one GLS run per model. Project names match the as-run pico
+# workspace (scripts/phenoplier/*/), so a workspace that already holds a
+# finished project is reused rather than recomputed.
+# ============================================================
+
+rule gls_bp_coverage_full:
+    """GLS on one ARCHS4 coverage CLAMPfull_bp fit (native rank)."""
     input:
-        rds=phenoplier_model_rds,
+        validated=lambda wc: a4_cov_validated("archs4", wc.fraction, wc.seed),
         script="scripts/phenoplier/run_gls.sh",
     output:
-        summary=f"{PHENOPLIER_OUT}/{{model_key}}/gls-summary-phenomexcan.tsv.gz",
+        summary=f"{PHENOPLIER_COV_FULL_DIR}/cov_rs{{fraction}}_seed{{seed}}.tsv.gz",
     log:
-        f"{PHENOPLIER_OUT}/{{model_key}}/phenoplier.log"
+        f"{PHENOPLIER_COV_FULL_DIR}/cov_rs{{fraction}}_seed{{seed}}.log"
     params:
-        conda_env=PHENOPLIER_CFG["conda_env"],
-        namespace=PHENOPLIER_CFG["namespace"],
-        lv_percentile=PHENOPLIER_CFG["lv_percentile"],
-        executor=PHENOPLIER_CLUSTER_CFG["executor"],
-        cluster=PHENOPLIER_CLUSTER_CFG.get("cluster", ""),
-        trait_filter=PHENOPLIER_CFG.get("trait_filter", "biomedical"),
+        rds=lambda wc: (
+            f"{a4_cov_model_dir('archs4', wc.fraction, wc.seed)}/{A4_COV_CFG['model_name']}.rds"
+        ),
+        name=lambda wc: f"cov_rs{wc.fraction}_seed{wc.seed}_{A4_COV_CFG['model_name']}",
+    threads: int(PHENOPLIER_GLS_RES["threads"])
     resources:
-        # Matches phenoplier-cli's own documented per-job defaults
-        # (scripts/slurm/submit.py: 15 CPUs / 45 GB / 7-day wall clock).
-        mem_mb=46000,
-        runtime=10080,
-    threads: 15
+        mem_mb=int(PHENOPLIER_GLS_RES["mem_mb"]),
+        runtime=int(PHENOPLIER_GLS_RES["runtime"]),
     wildcard_constraints:
-        model_key=PHENOPLIER_KEY_PATTERN,
+        fraction=A4_COV_LEVEL_PATTERN,
+        seed=A4_COV_SEED_PATTERN,
+    conda: PHENOPLIER_CFG["conda_env"]
     shell:
-        "bash {input.script} {input.rds} {wildcards.model_key} "
-        "{params.conda_env} {params.namespace} {params.lv_percentile} "
-        "{params.executor} '{params.cluster}' {threads} {params.trait_filter} "
-        "{output.summary} > {log} 2>&1"
+        PHENOPLIER_GLS_SHELL
 
 
-# Traits are filtered by phenoplier-cli itself, at run time (see
-# phenoplier.yaml: trait_filter), so the excluded ones never reach these
-# summaries and there is nothing left to filter here -- this rule is now a
-# plain concatenation. Each model's own exclusion log (copied next to its
-# summary by run_gls.sh as trait_filter_excluded.tsv) records what was
-# dropped and why.
+rule gls_bp_coverage_base:
+    """GLS on the CLAMPbase of one ARCHS4 coverage cell."""
+    input:
+        rds=lambda wc: f"{a4_cov_cell(wc.fraction, wc.seed)}/CLAMPbase.rds",
+        script="scripts/phenoplier/run_gls.sh",
+    output:
+        summary=f"{PHENOPLIER_COV_BASE_DIR}/cov_rs{{fraction}}_seed{{seed}}.tsv.gz",
+    log:
+        f"{PHENOPLIER_COV_BASE_DIR}/cov_rs{{fraction}}_seed{{seed}}.log"
+    params:
+        rds=lambda wc, input: input.rds,
+        name=lambda wc: f"cov_rs{wc.fraction}_seed{wc.seed}_CLAMPbase",
+    threads: int(PHENOPLIER_GLS_RES["threads"])
+    resources:
+        mem_mb=int(PHENOPLIER_GLS_RES["mem_mb"]),
+        runtime=int(PHENOPLIER_GLS_RES["runtime"]),
+    wildcard_constraints:
+        fraction=A4_COV_LEVEL_PATTERN,
+        seed=A4_COV_SEED_PATTERN,
+    conda: PHENOPLIER_CFG["conda_env"]
+    shell:
+        PHENOPLIER_GLS_SHELL
+
+
+rule gls_bp_saturation_full:
+    """GLS on one ARCHS4 saturation CLAMPfull_bp fit (forced K)."""
+    input:
+        validated=lambda wc: a4_sat_validated(wc.fraction, wc.k, wc.seed),
+        script="scripts/phenoplier/run_gls.sh",
+    output:
+        summary=f"{PHENOPLIER_SAT_FULL_DIR}/sat_rs{{fraction}}_k{{k}}_seed{{seed}}.tsv.gz",
+    log:
+        f"{PHENOPLIER_SAT_FULL_DIR}/sat_rs{{fraction}}_k{{k}}_seed{{seed}}.log"
+    params:
+        rds=lambda wc: (
+            f"{a4_sat_model_dir(wc.fraction, wc.k, wc.seed)}/{A4_SAT_CFG['model_name']}.rds"
+        ),
+        name=lambda wc: (
+            f"sat_rs{wc.fraction}_k{wc.k}_seed{wc.seed}_{A4_SAT_CFG['model_name']}"
+        ),
+    threads: int(PHENOPLIER_GLS_RES["threads"])
+    resources:
+        mem_mb=int(PHENOPLIER_GLS_RES["mem_mb"]),
+        runtime=int(PHENOPLIER_GLS_RES["runtime"]),
+    wildcard_constraints:
+        fraction=A4_SAT_FRACTION_PATTERN,
+        k=PHENOPLIER_SAT_K_PATTERN,
+        seed=A4_SAT_SEED_PATTERN,
+    conda: PHENOPLIER_CFG["conda_env"]
+    shell:
+        PHENOPLIER_GLS_SHELL
+
+
+rule gls_bp_saturation_base:
+    """GLS on one ARCHS4 saturation CLAMPbase (forced K)."""
+    input:
+        # ancient(): like the saturation ORA rules, an existing CLAMPbase from
+        # the earlier sweep must not be refit just because it is old.
+        rds=lambda wc: ancient(a4_sat_base_rds(wc.fraction, wc.k, wc.seed)),
+        script="scripts/phenoplier/run_gls.sh",
+    output:
+        summary=f"{PHENOPLIER_SAT_BASE_DIR}/sat_rs{{fraction}}_k{{k}}_seed{{seed}}.tsv.gz",
+    log:
+        f"{PHENOPLIER_SAT_BASE_DIR}/sat_rs{{fraction}}_k{{k}}_seed{{seed}}.log"
+    params:
+        rds=lambda wc, input: input.rds,
+        name=lambda wc: f"sat_rs{wc.fraction}_k{wc.k}_seed{wc.seed}_CLAMPbase",
+    threads: int(PHENOPLIER_GLS_RES["threads"])
+    resources:
+        mem_mb=int(PHENOPLIER_GLS_RES["mem_mb"]),
+        runtime=int(PHENOPLIER_GLS_RES["runtime"]),
+    wildcard_constraints:
+        fraction=A4_SAT_FRACTION_PATTERN,
+        k=PHENOPLIER_SAT_K_PATTERN,
+        seed=A4_SAT_SEED_PATTERN,
+    conda: PHENOPLIER_CFG["conda_env"]
+    shell:
+        PHENOPLIER_GLS_SHELL
+
+
+rule gls_bp_final_full:
+    """GLS on the published full-data CLAMPfull_bp of one compendium."""
+    input:
+        manifest=rules.publish_bp_model.output.manifest,
+        script="scripts/phenoplier/run_gls.sh",
+    output:
+        summary=f"{PHENOPLIER_FIN_FULL_DIR}/final_{{dataset}}.tsv.gz",
+    log:
+        f"{PHENOPLIER_FIN_FULL_DIR}/final_{{dataset}}.log"
+    params:
+        rds=lambda wc: a4_final_bp_rds(wc.dataset),
+        name=lambda wc: f"final_{wc.dataset}_{A4_COV_CFG['model_name']}",
+    threads: int(PHENOPLIER_GLS_RES["threads"])
+    resources:
+        mem_mb=int(PHENOPLIER_GLS_RES["mem_mb"]),
+        runtime=int(PHENOPLIER_GLS_RES["runtime"]),
+    wildcard_constraints:
+        dataset=A4_FINAL_DATASET_PATTERN,
+    conda: PHENOPLIER_CFG["conda_env"]
+    shell:
+        PHENOPLIER_GLS_SHELL
+
+
+rule gls_final_base:
+    """GLS on the published full-data CLAMPbase of one compendium."""
+    input:
+        rds=lambda wc: a4_final_base_rds(wc.dataset),
+        script="scripts/phenoplier/run_gls.sh",
+    output:
+        summary=f"{PHENOPLIER_FIN_BASE_DIR}/final_{{dataset}}.tsv.gz",
+    log:
+        f"{PHENOPLIER_FIN_BASE_DIR}/final_{{dataset}}.log"
+    params:
+        rds=lambda wc, input: input.rds,
+        name=lambda wc: f"final_{wc.dataset}_CLAMPbase",
+    threads: int(PHENOPLIER_GLS_RES["threads"])
+    resources:
+        mem_mb=int(PHENOPLIER_GLS_RES["mem_mb"]),
+        runtime=int(PHENOPLIER_GLS_RES["runtime"]),
+    wildcard_constraints:
+        dataset=A4_FINAL_DATASET_PATTERN,
+    conda: PHENOPLIER_CFG["conda_env"]
+    shell:
+        PHENOPLIER_GLS_SHELL
+
+
+rule gls_canonical:
+    """GLS on the published canonical-prior CLAMPfull of one compendium.
+
+    Written beside the model like its ORA results (archs4_canonical.smk).
+    """
+    input:
+        rds=f"{A4_CAN_FINAL_ROOT}/{{dataset}}/{A4_CAN_MODEL_NAME}.rds",
+        script="scripts/phenoplier/run_gls.sh",
+    output:
+        summary=f"{A4_CAN_FINAL_ROOT}/{{dataset}}/traits/canon_{{dataset}}.tsv.gz",
+    log:
+        f"{A4_CAN_FINAL_ROOT}/{{dataset}}/traits/canon_{{dataset}}.log"
+    params:
+        rds=lambda wc, input: input.rds,
+        name=lambda wc: f"canon_{wc.dataset}_{A4_CAN_MODEL_NAME}",
+    threads: int(PHENOPLIER_GLS_RES["threads"])
+    resources:
+        mem_mb=int(PHENOPLIER_GLS_RES["mem_mb"]),
+        runtime=int(PHENOPLIER_GLS_RES["runtime"]),
+    wildcard_constraints:
+        dataset=A4_CAN_COMPENDIUM_PATTERN,
+    conda: PHENOPLIER_CFG["conda_env"]
+    shell:
+        PHENOPLIER_GLS_SHELL
+
+
+# ============================================================
+# Step 2: one-file HDF5 composite study store per final model: the CLAMP .rds
+# (Z, hyperparameters, provenance) plus that model's GLS results, via
+# `phenoplier store build`. Depends on the model's published summary so the
+# run has finished and passed the completeness gate.
+# ============================================================
+
+rule store_bp_final_full:
+    input:
+        summary=f"{PHENOPLIER_FIN_FULL_DIR}/final_{{dataset}}.tsv.gz",
+        script="scripts/phenoplier/store_build.sh",
+    output:
+        store=f"{phenoplier_store_dir(PHENOPLIER_FIN_FULL_DIR)}/final_{{dataset}}_{A4_COV_CFG['model_name']}.h5",
+    log:
+        f"{phenoplier_store_dir(PHENOPLIER_FIN_FULL_DIR)}/final_{{dataset}}_{A4_COV_CFG['model_name']}.log"
+    params:
+        rds=lambda wc: a4_final_bp_rds(wc.dataset),
+        name=lambda wc: f"final_{wc.dataset}_{A4_COV_CFG['model_name']}",
+    resources:
+        mem_mb=int(PHENOPLIER_STORE_RES["mem_mb"]),
+        runtime=int(PHENOPLIER_STORE_RES["runtime"]),
+    wildcard_constraints:
+        dataset=A4_FINAL_DATASET_PATTERN,
+    conda: PHENOPLIER_CFG["conda_env"]
+    shell:
+        PHENOPLIER_STORE_SHELL
+
+
+rule store_final_base:
+    input:
+        summary=f"{PHENOPLIER_FIN_BASE_DIR}/final_{{dataset}}.tsv.gz",
+        script="scripts/phenoplier/store_build.sh",
+    output:
+        store=f"{phenoplier_store_dir(PHENOPLIER_FIN_BASE_DIR)}/final_{{dataset}}_CLAMPbase.h5",
+    log:
+        f"{phenoplier_store_dir(PHENOPLIER_FIN_BASE_DIR)}/final_{{dataset}}_CLAMPbase.log"
+    params:
+        rds=lambda wc: a4_final_base_rds(wc.dataset),
+        name=lambda wc: f"final_{wc.dataset}_CLAMPbase",
+    resources:
+        mem_mb=int(PHENOPLIER_STORE_RES["mem_mb"]),
+        runtime=int(PHENOPLIER_STORE_RES["runtime"]),
+    wildcard_constraints:
+        dataset=A4_FINAL_DATASET_PATTERN,
+    conda: PHENOPLIER_CFG["conda_env"]
+    shell:
+        PHENOPLIER_STORE_SHELL
+
+
+# ============================================================
+# Step 3: cross-model long table (every LV x trait row of every summary).
+# The per-family trait-RECOVERY tables and reports are archs4_traits.smk's.
+# ============================================================
+
 rule aggregate_phenoplier_traits:
     input:
-        summaries=expand(
-            f"{PHENOPLIER_OUT}/{{model_key}}/gls-summary-phenomexcan.tsv.gz",
-            model_key=PHENOPLIER_MODEL_KEYS,
-        ),
-        aggregate_script="scripts/phenoplier/aggregate_traits.py",
+        clampfull_bp=PHENOPLIER_COV_FULL + PHENOPLIER_SAT_FULL + PHENOPLIER_FIN_FULL,
+        clampbase=PHENOPLIER_COV_BASE + PHENOPLIER_SAT_BASE + PHENOPLIER_FIN_BASE,
+        script="scripts/phenoplier/aggregate_traits.py",
         wrapper="scripts/phenoplier/aggregate_traits.sh",
     output:
-        long=f"{PHENOPLIER_OUT}/phenoplier_traits_long.csv",
+        long=f"{PHENOPLIER_REPORT}/phenoplier_traits_long.csv",
     log:
-        f"{PHENOPLIER_OUT}/aggregate.log"
+        f"{PHENOPLIER_REPORT}/aggregate.log"
     params:
         conda_env=PHENOPLIER_CFG["conda_env"],
     resources:
         mem_mb=16000,
         runtime=120,
+    conda: PHENOPLIER_CFG["conda_env"]
     shell:
-        "bash {input.wrapper} {PHENOPLIER_OUT} {output.long} "
-        "{params.conda_env} > {log} 2>&1"
+        "bash {input.wrapper} {params.conda_env} --out {output.long} "
+        "--clampfull-bp {input.clampfull_bp} --clampbase {input.clampbase} "
+        "> {log} 2>&1"
+
+
+# ============================================================
+# Step 4: convenience targets
+# ============================================================
+
+rule phenoplier_coverage:
+    input:
+        PHENOPLIER_COV_FULL + PHENOPLIER_COV_BASE,
+
+
+rule phenoplier_saturation:
+    input:
+        PHENOPLIER_SAT_FULL + PHENOPLIER_SAT_BASE,
+
+
+rule phenoplier_finals:
+    input:
+        PHENOPLIER_FIN_FULL + PHENOPLIER_FIN_BASE,
+
+
+rule phenoplier_canonical:
+    input:
+        PHENOPLIER_CANONICAL,
+
+
+rule phenoplier_final_stores:
+    input:
+        PHENOPLIER_FIN_STORES,
 
 
 rule phenoplier_traits:
     input:
         rules.aggregate_phenoplier_traits.output.long,
-
-
-rule phenoplier_archs4_final:
-    input:
-        expand(
-            f"{PHENOPLIER_OUT}/{{model_key}}/gls-summary-phenomexcan.tsv.gz",
-            model_key=phenoplier_keys("archs4_final/"),
-        ),
-
-
-rule phenoplier_archs4_coverage:
-    input:
-        expand(
-            f"{PHENOPLIER_OUT}/{{model_key}}/gls-summary-phenomexcan.tsv.gz",
-            model_key=phenoplier_keys("archs4_coverage/"),
-        ),
-
-
-rule phenoplier_archs4_saturation:
-    input:
-        expand(
-            f"{PHENOPLIER_OUT}/{{model_key}}/gls-summary-phenomexcan.tsv.gz",
-            model_key=phenoplier_keys("archs4_saturation/"),
-        ),
-
-
-rule phenoplier_gtex:
-    input:
-        expand(
-            f"{PHENOPLIER_OUT}/{{model_key}}/gls-summary-phenomexcan.tsv.gz",
-            model_key=phenoplier_keys("gtex/"),
-        ),
-
-
-rule phenoplier_final:
-    input:
-        expand(
-            f"{PHENOPLIER_OUT}/{{model_key}}/gls-summary-phenomexcan.tsv.gz",
-            model_key=phenoplier_keys("final/"),
-        ),
-
-
-# One-file HDF5 composite study store per final model: the CLAMP .rds (Z,
-# hyperparameters, provenance) plus that model's GLS phenomexcan results, via
-# `phenoplier store build` (phenoplier-cli #70). One store per model because a
-# store holds a single /clamp model but may hold many GWAS cohorts. Depends on
-# the model's GLS summary so the run has finished; the wrapper then reads the
-# per-phenotype results from the workspace project dir.
-rule phenoplier_store:
-    input:
-        rds=phenoplier_model_rds,
-        summary=f"{PHENOPLIER_OUT}/{{model_key}}/gls-summary-phenomexcan.tsv.gz",
-        script="scripts/phenoplier/store_build.sh",
-    output:
-        store=f"{PHENOPLIER_OUT}/{{model_key}}/study.h5",
-    log:
-        f"{PHENOPLIER_OUT}/{{model_key}}/store_build.log"
-    params:
-        conda_env=PHENOPLIER_CFG["conda_env"],
-        cohort="phenomexcan_rapid_gwas",
-    resources:
-        mem_mb=32000,
-        runtime=120,
-    wildcard_constraints:
-        model_key=PHENOPLIER_KEY_PATTERN,
-    shell:
-        "bash {input.script} {input.rds} {wildcards.model_key} "
-        "{params.conda_env} {params.cohort} {output.store} > {log} 2>&1"
-
-
-rule phenoplier_final_stores:
-    input:
-        expand(
-            f"{PHENOPLIER_OUT}/{{model_key}}/study.h5",
-            model_key=phenoplier_keys("final/"),
-        ),

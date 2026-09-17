@@ -5,12 +5,11 @@ pivlab/phenoplier-cli) run against the CLAMP models this repo produces. This fil
 the index of **what was actually run** and **how to reproduce it on pico**.
 
 - Scripts live beside this file (`scripts/phenoplier/{final_models,saturation_k1728,coverage,clampbase}/`).
-- The rule module `workflow/rules/phenoplier.smk` is shipped **un-wired** — see its
-  header and `README.md` (§ Status). Nothing here is on the Snakefile DAG yet.
-- The GLS per-model summaries produced here are the same directories Marc's
-  `workflow/rules/archs4_traits.smk` (`A4_TRAIT_CFG` coverage / saturation / finals
-  dirs) consumes to build its trait-recovery reports. **This is the upstream that
-  produces them.**
+- The rule module `workflow/rules/phenoplier.smk` is wired into `workflow/Snakefile`:
+  each rule takes its model from the coverage / saturation / final-model rules that
+  fit it and writes the summary into the `archs4.yaml: traits.*` directory that
+  `workflow/rules/archs4_traits.smk` aggregates — see `README.md`. The `sbatch`
+  recipes below are the record of the as-run jobs.
 
 ## What was run — 86 runs across 3 CLAMP model families
 

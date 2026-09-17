@@ -1,81 +1,180 @@
 #!/usr/bin/env bash
-# Run `phenoplier shortcut gls` for one CLAMP model and copy its result back
-# into this repo's output tree.
+# Run pivlab/phenoplier-cli's GLS pipeline for ONE CLAMP model and publish its
+# combined summary where this repo's rules expect it. Driven by
+# workflow/rules/phenoplier.smk (one call per model); every model in
+# RUN_SUMMARY.md went through this same flow.
 #
-# phenoplier-cli lives in its own conda env (see setup_env.sh) and its
-# `shortcut gls` names the project directory itself (date-prefixed stem, see
-# its docs/tutorials/tutorial-custom-model.md); rather than reproducing that
-# naming logic here, this script passes an explicit --name and then finds the
-# resulting project directory by that name, so a change to phenoplier-cli's
-# naming scheme doesn't silently break this wrapper.
+#   1. Register + init (`shortcut gls --unlock`): extract the .rds, register it
+#      in the workspace, create the project and write pipeline_config.yaml,
+#      WITHOUT computing. Only when no config exists yet: a requeue must not
+#      re-init, so the step 1-6 sentinels survive and the pipeline resumes.
+#   2. Pin the step-6 / step-7 pools in that config. Serial step 6: the forked
+#      ProcessPoolExecutor otherwise deadlocks. Capped step 7: un-pinned,
+#      phenoplier sizes the pool from the whole node and thrashes it.
+#   3. `workflow gls run` (honours the edited config; resume-safe).
+#   4. Gate: refuse to publish a summary that is not COMPLETE
+#      (verify_summary.py) -- `summarize` concatenates whatever exists, so an
+#      interrupted step 7 yields a smaller but valid-looking file.
+#   5. Publish the summary (+ pickle, + the trait filter's exclusion log)
+#      atomically next to each other.
+#
+# phenoplier-cli lives in its own conda env (see setup_env.sh) and `phenoplier`
+# shells out to a bare `snakemake`, whose rules shell out to a bare
+# `phenoplier`, so the env's bin has to be on PATH.
 set -euo pipefail
 
-rds="$1"
-model_key="$2"
-conda_env="$3"
-namespace="$4"
-lv_percentile="$5"
-executor="$6"
-cluster="$7"
-n_jobs="$8"
-trait_filter="$9"
-summary_out="${10}"
+usage() {
+  cat >&2 <<USAGE
+usage: $0 --rds <model.rds> --name <project> --summary-out <out.tsv.gz> [options]
+  --conda-env NAME            (phenoplier-cli-neo)
+  --namespace NS              workspace model namespace (clamp)
+  --cohort NAME               (phenomexcan_rapid_gwas)
+  --lv-percentile FLOAT       (0.01)
+  --trait-filter all|biomedical  (biomedical)
+  --expected-phenotypes N     completeness gate (2366 = biomedical)
+  --executor local|slurm      phenoplier-cli's own executor (local)
+  --cluster NAME              phenoplier-cli cluster profile, slurm only ('')
+  --n-jobs N                  cores for the local executor (4)
+  --workers-step6 N --blas-step6 N --workers-step7 N --blas-step7 N  (1 8 6 2)
+Workspace: \$PHENOPLIER_HOME (default \$HOME/phenoplier).
+USAGE
+  exit 2
+}
 
-name="$(printf '%s' "$model_key" | tr '/' '_')"
+conda_env=phenoplier-cli-neo
+namespace=clamp
+cohort=phenomexcan_rapid_gwas
+lv_percentile=0.01
+trait_filter=biomedical
+expected_phenotypes=2366
+executor=local
+cluster=""
+n_jobs=4
+workers_step6=1
+blas_step6=8
+workers_step7=6
+blas_step7=2
+rds=""
+name=""
+summary_out=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --rds) rds="$2"; shift 2 ;;
+    --name) name="$2"; shift 2 ;;
+    --summary-out) summary_out="$2"; shift 2 ;;
+    --conda-env) conda_env="$2"; shift 2 ;;
+    --namespace) namespace="$2"; shift 2 ;;
+    --cohort) cohort="$2"; shift 2 ;;
+    --lv-percentile) lv_percentile="$2"; shift 2 ;;
+    --trait-filter) trait_filter="$2"; shift 2 ;;
+    --expected-phenotypes) expected_phenotypes="$2"; shift 2 ;;
+    --executor) executor="$2"; shift 2 ;;
+    --cluster) cluster="$2"; shift 2 ;;
+    --n-jobs) n_jobs="$2"; shift 2 ;;
+    --workers-step6) workers_step6="$2"; shift 2 ;;
+    --blas-step6) blas_step6="$2"; shift 2 ;;
+    --workers-step7) workers_step7="$2"; shift 2 ;;
+    --blas-step7) blas_step7="$2"; shift 2 ;;
+    -h|--help) usage ;;
+    *) echo "unknown argument: $1" >&2; usage ;;
+  esac
+done
+[[ -n "$rds" && -n "$name" && -n "$summary_out" ]] || usage
+[[ -f "$rds" ]] || { echo "model not found: $rds" >&2; exit 1; }
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 workspace="${PHENOPLIER_HOME:-$HOME/phenoplier}"
+export PHENOPLIER_HOME="$workspace" PHENOPLIER_ROOT_DIR="$workspace"
 
+# shellcheck disable=SC1091
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$conda_env"
-
-# `phenoplier` shells out to a bare `snakemake`, and each Snakemake rule shells
-# out to a bare `phenoplier`, so the env's bin has to be ON PATH -- `conda
-# activate` does that, but keep it explicit so a non-interactive shell that
-# skips conda's hooks still works.
 export PATH="${CONDA_PREFIX:-}/bin:${PATH}"
 
-cluster_args=()
-if [[ -n "$cluster" ]]; then
-  cluster_args=(--cluster "$cluster")
+# `shortcut gls --name X` creates the project at exactly <workspace>/projects/X
+# (phenoplier-cli: commands/models.py derive_folder_name) -- no date prefix.
+project="$workspace/projects/$name"
+cfg="$project/pipeline_config.yaml"
+results="$project/results/gls/phenoplier"
+summary="$results/gls-summary-${cohort}.tsv.gz"
+
+echo "[start] $(date -Is)  name=$name  rds=$rds  executor=$executor  n_jobs=$n_jobs"
+echo "[version] $(phenoplier -v 2>&1 | tail -1)  workspace=$workspace"
+
+if [[ ! -s "$summary" ]]; then
+  if [[ ! -s "$cfg" ]]; then
+    cluster_args=()
+    if [[ -n "$cluster" ]]; then
+      cluster_args=(--cluster "$cluster")
+    fi
+    echo "[init] $(date -Is)  registering model + writing $cfg"
+    phenoplier shortcut gls \
+      --input "$rds" \
+      --name "$name" \
+      --model-namespace "$namespace" \
+      --cohort "$cohort" \
+      --lv-percentile "$lv_percentile" \
+      --trait-filter "$trait_filter" \
+      --executor "$executor" \
+      --n-jobs "$n_jobs" \
+      ${cluster_args[@]+"${cluster_args[@]}"} \
+      --unlock
+  else
+    echo "[init] $(date -Is)  resuming: $cfg exists"
+  fi
+
+  python - "$cfg" "$workers_step6" "$blas_step6" "$workers_step7" "$blas_step7" <<'PY'
+import sys, yaml
+path, nw6, bl6, nw7, bl7 = sys.argv[1], *map(int, sys.argv[2:6])
+with open(path) as fh:
+    cfg = yaml.safe_load(fh)
+cfg["n_workers_step6"] = nw6
+cfg["blas_threads_step6"] = bl6
+cfg["n_workers_step7"] = nw7
+cfg["blas_threads_step7"] = bl7
+with open(path, "w") as fh:
+    yaml.safe_dump(cfg, fh, sort_keys=False)
+print(f"[pin] step6={nw6}x{bl6} step7={nw7}x{bl7} -> {path}")
+PY
+
+  rm -f "$project/.snakemake/locks/"*.lock 2>/dev/null || true
+  echo "[run] $(date -Is)"
+  phenoplier workflow gls run --config-file "$cfg"
+else
+  echo "[run] skip: $summary exists"
 fi
 
-phenoplier shortcut gls \
-  --input "$rds" \
-  --name "$name" \
-  --model-namespace "$namespace" \
-  --lv-percentile "$lv_percentile" \
-  --trait-filter "$trait_filter" \
-  --executor "$executor" \
-  --n-jobs "$n_jobs" \
-  "${cluster_args[@]}"
-
-project_dir="$(
-  find "$workspace/projects" -maxdepth 1 -type d -name "*${name}*" \
-    -printf '%T@ %p\n' | sort -rn | head -n1 | cut -d' ' -f2-
-)"
-if [[ -z "$project_dir" ]]; then
-  echo "No project directory matching '*${name}*' found under $workspace/projects" >&2
+# The summary is named after the cohort (gls-summary-<cohort-slug>.tsv.gz);
+# older phenoplier-cli kept a gls-summary-phenomexcan.* alias. Take the
+# cohort-named file, then the alias, then whatever single summary exists.
+if [[ ! -s "$summary" ]]; then
+  summary="$results/gls-summary-phenomexcan.tsv.gz"
+fi
+if [[ ! -s "$summary" ]]; then
+  summary="$(ls -1 "$results"/gls-summary-*.tsv.gz 2>/dev/null | head -n1 || true)"
+fi
+if [[ -z "$summary" || ! -s "$summary" ]]; then
+  echo "[ERROR] $name: no gls-summary-*.tsv.gz under $results (run failed?)" >&2
   exit 1
 fi
+
+# Gate: complete (expected phenotype count), no zero p-values, NaN only on
+# LVs flagged degenerate. A failed gate leaves NO output, so a requeue resumes
+# step 7 instead of Snakemake believing the model is done.
+python "$here/verify_summary.py" "$summary" "$expected_phenotypes"
 
 mkdir -p "$(dirname "$summary_out")"
-
-# The summary is written under results/gls/phenoplier/, named after the cohort
-# (`gls-summary-<cohort-slug>.tsv.gz`); for the default phenomexcan cohort a
-# `gls-summary-phenomexcan.*` alias is kept for backwards compatibility. Take
-# the alias when present and fall back to whatever cohort-named summary exists,
-# so a non-default --cohort still works.
-summary_dir="$project_dir/results/gls/phenoplier"
-src="$summary_dir/gls-summary-phenomexcan.tsv.gz"
-if [[ ! -f "$src" ]]; then
-  src="$(ls -1 "$summary_dir"/gls-summary-*.tsv.gz 2>/dev/null | head -n1 || true)"
+tmp="${summary_out}.tmp.$$"
+cp -f "$summary" "$tmp"
+mv -f "$tmp" "$summary_out"
+stem="${summary_out%.tsv.gz}"
+if [[ -f "${summary%.tsv.gz}.pkl.gz" ]]; then
+  cp -f "${summary%.tsv.gz}.pkl.gz" "${stem}.pkl.gz"
 fi
-if [[ -z "$src" || ! -f "$src" ]]; then
-  echo "No gls-summary-*.tsv.gz found in $summary_dir" >&2
-  exit 1
-fi
-cp "$src" "$summary_out"
-cp "${src%.tsv.gz}.pkl.gz" "$(dirname "$summary_out")/" 2>/dev/null || true
-
 # The filter's exclusion log travels with the results: which traits were
 # dropped, and why, is part of the provenance of these numbers.
-cp "$project_dir/trait_filter_excluded.tsv" "$(dirname "$summary_out")/" 2>/dev/null || true
+if [[ -f "$project/trait_filter_excluded.tsv" ]]; then
+  cp -f "$project/trait_filter_excluded.tsv" "${stem}_trait_filter_excluded.tsv"
+fi
+echo "[done] $(date -Is)  $name -> $summary_out"
