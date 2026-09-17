@@ -115,7 +115,7 @@ write_clamp_model <- function(res, model_dir, genes, sample_names, rds_path = NU
   invisible(res)
 }
 
-# Projection workflow helpers -------------------------------------------------
+# Projection workflow helpers
 
 read_projection_model <- function(path) {
   mdl <- readRDS(path)
