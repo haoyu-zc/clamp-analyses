@@ -36,6 +36,7 @@ usage() {
   cat >&2 <<USAGE
 usage: $0 --rds <model.rds> --name <project> --summary-out <out.tsv.gz> [options]
   --conda-env NAME            (phenoplier-cli-neo)
+  --require-version X.Y.Z     fail unless the installed phenoplier-cli is this release
   --namespace NS              workspace model namespace (clamp)
   --cohort NAME               (phenomexcan_rapid_gwas)
   --lv-percentile FLOAT       (0.01)
@@ -51,6 +52,7 @@ USAGE
 }
 
 conda_env=phenoplier-cli-neo
+require_version=""
 namespace=clamp
 cohort=phenomexcan_rapid_gwas
 lv_percentile=0.01
@@ -73,6 +75,7 @@ while [[ $# -gt 0 ]]; do
     --name) name="$2"; shift 2 ;;
     --summary-out) summary_out="$2"; shift 2 ;;
     --conda-env) conda_env="$2"; shift 2 ;;
+    --require-version) require_version="$2"; shift 2 ;;
     --namespace) namespace="$2"; shift 2 ;;
     --cohort) cohort="$2"; shift 2 ;;
     --lv-percentile) lv_percentile="$2"; shift 2 ;;
@@ -109,8 +112,16 @@ results="$project/results/gls/phenoplier"
 summary="$results/gls-summary-${cohort}.tsv.gz"
 fingerprint_file="$project/clamp_source.sha256"
 
+installed="$(phenoplier --version 2>&1 | tail -1 | sed -E 's/.*v([0-9][0-9A-Za-z.+-]*).*/\1/')"
 echo "[start] $(date -Is)  name=$name  rds=$rds  executor=$executor  n_jobs=$n_jobs"
-echo "[version] $(phenoplier -v 2>&1 | tail -1)  workspace=$workspace"
+echo "[version] phenoplier-cli $installed  workspace=$workspace"
+# Results from different phenoplier-cli releases are not comparable; the
+# whole model set is produced on the release phenoplier.yaml pins.
+if [[ -n "$require_version" && "$installed" != "$require_version" ]]; then
+  echo "[ERROR] phenoplier-cli $installed in env '$conda_env' but $require_version is required" \
+    "(workflow/config/phenoplier.yaml: version); rebuild the env with scripts/phenoplier/setup_env.sh" >&2
+  exit 1
+fi
 
 fingerprint="$(sha256sum "$rds" | cut -d' ' -f1)"
 if [[ -d "$project" ]]; then

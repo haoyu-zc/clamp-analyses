@@ -11,13 +11,14 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<USAGE
-usage: $0 --rds <model.rds> --name <project> --store-out <out.h5> [--conda-env NAME] [--cohort NAME]
+usage: $0 --rds <model.rds> --name <project> --store-out <out.h5> [--conda-env NAME] [--require-version X.Y.Z] [--cohort NAME]
 Workspace: \$PHENOPLIER_HOME (default \$HOME/phenoplier).
 USAGE
   exit 2
 }
 
 conda_env=phenoplier-cli-neo
+require_version=""
 cohort=phenomexcan_rapid_gwas
 rds=""
 name=""
@@ -29,6 +30,7 @@ while [[ $# -gt 0 ]]; do
     --name) name="$2"; shift 2 ;;
     --store-out) store_out="$2"; shift 2 ;;
     --conda-env) conda_env="$2"; shift 2 ;;
+    --require-version) require_version="$2"; shift 2 ;;
     --cohort) cohort="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "unknown argument: $1" >&2; usage ;;
@@ -45,6 +47,13 @@ source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$conda_env"
 # Reading the .rds via `store build --clamp-rds` needs R on PATH too (rpy2).
 export PATH="${CONDA_PREFIX:-}/bin:${PATH}"
+
+installed="$(phenoplier --version 2>&1 | tail -1 | sed -E 's/.*v([0-9][0-9A-Za-z.+-]*).*/\1/')"
+if [[ -n "$require_version" && "$installed" != "$require_version" ]]; then
+  echo "[ERROR] phenoplier-cli $installed in env '$conda_env' but $require_version is required" \
+    "(workflow/config/phenoplier.yaml: version)" >&2
+  exit 1
+fi
 
 project="$workspace/projects/$name"
 # Per-phenotype GLS results live under the cohort-named subdir; the combined

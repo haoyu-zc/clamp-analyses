@@ -19,7 +19,9 @@ set -euo pipefail
 #     main.
 # The env is created from phenoplier-cli's environment.yml, which pulls rpy2 +
 # r-base: reading a CLAMP .rds model (and `store build --clamp-rds`) needs R.
-# Override PHENOPLIER_REF to track a branch or another tag.
+# Keep in step with workflow/config/phenoplier.yaml: version -- the rules
+# refuse to run on any other release. Override PHENOPLIER_REF only to test a
+# branch; do not mix releases within one model set.
 REF="${PHENOPLIER_REF:-v0.5.2}"
 CLONE_DIR="${PHENOPLIER_CLONE_DIR:-$HOME/phenoplier-cli}"
 TARGET_ENV="${PHENOPLIER_TARGET_ENV:-phenoplier-cli-neo}"

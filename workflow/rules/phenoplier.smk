@@ -28,10 +28,13 @@ import os
 # scripts/phenoplier/RUN_SUMMARY.md went through: register + init, pin the
 # step-6/7 pools, run (resume-safe), gate on a complete summary, publish.
 #
-# The GLS standard-error collapse that emitted artifactual ~0 p-values for a
-# handful of pathological LVs in the sub-sampling models is fixed upstream
-# (pivlab/phenoplier-cli#85, in v0.5.2); the completeness gate still refuses
-# any summary with a zero p-value.
+# phenoplier-cli is pinned (phenoplier.yaml: version, 0.5.2 -- the release
+# the as-run models used): every job checks the installed version and fails
+# on a mismatch, so results never silently mix releases. The GLS
+# standard-error collapse that emitted artifactual ~0 p-values for a handful
+# of pathological LVs in the sub-sampling models is fixed in that release
+# (pivlab/phenoplier-cli#85); the completeness gate still refuses any summary
+# with a zero p-value.
 # ============================================================
 
 PHENOPLIER_CFG = config["phenoplier"]
@@ -159,6 +162,7 @@ PHENOPLIER_GLS_SHELL = "".join([
     "bash {input.script} --rds {params.rds} --name {params.name} ",
     "--summary-out {output.summary} --n-jobs {threads} ",
     f"--conda-env {PHENOPLIER_CFG['conda_env']} ",
+    f"--require-version {PHENOPLIER_CFG['version']} ",
     f"--namespace {PHENOPLIER_CFG['namespace']} ",
     f"--cohort {PHENOPLIER_CFG['cohort']} ",
     f"--lv-percentile {PHENOPLIER_CFG['lv_percentile']} ",
@@ -177,6 +181,7 @@ PHENOPLIER_STORE_SHELL = "".join([
     "bash {input.script} --rds {params.rds} --name {params.name} ",
     "--store-out {output.store} ",
     f"--conda-env {PHENOPLIER_CFG['conda_env']} ",
+    f"--require-version {PHENOPLIER_CFG['version']} ",
     f"--cohort {PHENOPLIER_CFG['cohort']} ",
     "> {log} 2>&1",
 ])

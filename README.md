@@ -93,9 +93,10 @@ Configuration: `workflow/config/archs4.yaml` and `workflow/config/recount2.yaml`
 
 LV–trait association runs `pivlab/phenoplier-cli` GLS on the coverage, saturation
 and final CLAMP models, and the trait-recovery reports aggregate the per-model
-summaries. phenoplier-cli runs in its own conda env (`scripts/phenoplier/setup_env.sh`,
-once per machine); `workflow/rules/phenoplier.smk` drives it one model at a time
-from this DAG. Configuration: `workflow/config/phenoplier.yaml`; details in
+summaries. phenoplier-cli is pinned to **v0.5.2** and runs in its own conda env
+(`scripts/phenoplier/setup_env.sh`, once per machine; every job checks the installed
+version); `workflow/rules/phenoplier.smk` drives it one model at a time from this
+DAG. Configuration: `workflow/config/phenoplier.yaml`; details in
 `scripts/phenoplier/README.md`.
 
 ```bash

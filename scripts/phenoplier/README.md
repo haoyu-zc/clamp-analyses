@@ -11,6 +11,13 @@ its **own conda env** (`phenoplier-cli-neo`); each GLS run is one shell job of
 this repo's DAG (`run_gls.sh`) that drives phenoplier-cli's pipeline in one
 workspace project per model.
 
+**phenoplier-cli is pinned to v0.5.2** (`workflow/config/phenoplier.yaml: version`),
+the release the 86 as-run models were produced with (`RUN_SUMMARY.md`). Every GLS
+and store job checks `phenoplier --version` and fails on a mismatch, and
+`setup_env.sh` installs that tag. To move to a newer release, bump the config key
+and `setup_env.sh` together and re-run the whole model set — results from
+different releases are not comparable.
+
 ## How it is wired
 
 `workflow/rules/phenoplier.smk` is included by `workflow/Snakefile` (config:
@@ -84,7 +91,7 @@ snakemake -n --snakefile workflow/Snakefile phenoplier_finals
 
 | path | what |
 |---|---|
-| `setup_env.sh` | one-time: build the `phenoplier-cli-neo` env (phenoplier-cli `main` + rpy2/R) |
+| `setup_env.sh` | one-time: build the `phenoplier-cli-neo` env (phenoplier-cli **v0.5.2** + rpy2/R) |
 | `run_gls.sh` | one model → one GLS summary (register + init, pin pools, run, gate, publish); driven by the rules |
 | `store_build.sh` | one model → one HDF5 study store; driven by the rules |
 | `verify_summary.py` | completeness gate: expected phenotype count, full phenotype x LV grid, p-values in (0, 1], degenerate-only NaN |
@@ -102,9 +109,10 @@ phenoplier workspace link /path/to/phenoplier_full_data
 ```
 
 The workspace defaults to `$HOME/phenoplier`; set `PHENOPLIER_HOME` to use another
-(e.g. `/pividori_lab/phenoplier_workspace` on pico). `setup_env.sh` tracks
-phenoplier-cli `main`; on an air-gapped cluster install the env from wheels
-transferred from a networked host — see `final_models/README.md`.
+(e.g. `/pividori_lab/phenoplier_workspace` on pico). `setup_env.sh` installs
+phenoplier-cli **v0.5.2** (the pinned release; `phenoplier --version` must report
+it). On an air-gapped cluster install the env from wheels transferred from a
+networked host — see `final_models/README.md`.
 
 ## Reproduce the as-run pico jobs
 

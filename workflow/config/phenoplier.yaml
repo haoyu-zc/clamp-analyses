@@ -6,6 +6,15 @@ phenoplier:
   # scripts/phenoplier/setup_env.sh.
   conda_env: phenoplier-cli-neo
 
+  # phenoplier-cli release every GLS job must run on. The 86 as-run models
+  # (scripts/phenoplier/RUN_SUMMARY.md) were produced with this release; it
+  # carries the GLS standard-error fix (#85) and the trait filter (#99/#100).
+  # run_gls.sh / store_build.sh refuse to run if `phenoplier --version`
+  # reports anything else, and setup_env.sh installs this tag. Bump here and
+  # in setup_env.sh together, and re-run the whole model set: results from
+  # different releases are not comparable.
+  version: 0.5.2
+
   # Workspace namespace the CLAMP models are registered under
   # (`phenoplier model register --namespace`).
   namespace: clamp
