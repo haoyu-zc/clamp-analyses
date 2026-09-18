@@ -122,7 +122,9 @@ if [[ -d "$project" ]]; then
       echo "[stale]   recorded $recorded"
       echo "[stale]   current  $fingerprint"
       echo "[stale]   moving $project -> $stale and re-registering $namespace/$name"
+      exec 9>"$workspace/.clamp_registry.lock"; flock 9
       phenoplier model remove --force "$namespace/$name" || true
+      flock -u 9; exec 9>&-
       mv "$project" "$stale"
     fi
   elif [[ -s "$cfg" ]]; then
@@ -139,6 +141,15 @@ if [[ ! -s "$summary" ]]; then
     fi
     # A fresh project always gets a fresh registration: phenoplier-cli skips
     # extraction when the key already exists, which would keep an old Z.
+    # The workspace registry (models/registry.toml) is rewritten whole by
+    # `model remove` without a lock, so concurrent GLS jobs initialising at
+    # the same time could drop each other's entries: hold a workspace-wide
+    # lock across remove + register/init. Only this short phase is
+    # serialised; the hours-long pipeline run is not.
+    lock="$workspace/.clamp_registry.lock"
+    exec 9>"$lock"
+    echo "[init] $(date -Is)  waiting for registry lock $lock"
+    flock 9
     phenoplier model remove --force "$namespace/$name" 2>/dev/null || true
     echo "[init] $(date -Is)  registering model + writing $cfg"
     phenoplier shortcut gls \
@@ -153,6 +164,8 @@ if [[ ! -s "$summary" ]]; then
       ${cluster_args[@]+"${cluster_args[@]}"} \
       --unlock
     printf '%s  %s\n' "$fingerprint" "$rds" > "$fingerprint_file"
+    flock -u 9
+    exec 9>&-
   else
     echo "[init] $(date -Is)  resuming: $cfg exists"
   fi

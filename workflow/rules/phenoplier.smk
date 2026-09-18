@@ -447,6 +447,9 @@ rule store_final_base:
 # ============================================================
 # Step 3: cross-model long table (every LV x trait row of every summary).
 # The per-family trait-RECOVERY tables and reports are archs4_traits.smk's.
+# A summary is ~4 M rows (1,728 LVs x 2,366 traits), so the table is streamed
+# to a gzipped CSV and is tens of GB for the full set; it is its own target
+# (phenoplier_long_table), not part of phenoplier_traits.
 # ============================================================
 
 rule aggregate_phenoplier_traits:
@@ -457,14 +460,14 @@ rule aggregate_phenoplier_traits:
         script="scripts/phenoplier/aggregate_traits.py",
         wrapper="scripts/phenoplier/aggregate_traits.sh",
     output:
-        long=f"{PHENOPLIER_REPORT}/phenoplier_traits_long.csv",
+        long=f"{PHENOPLIER_REPORT}/phenoplier_traits_long.csv.gz",
     log:
         f"{PHENOPLIER_REPORT}/aggregate.log"
     params:
         conda_env=PHENOPLIER_CFG["conda_env"],
     resources:
-        mem_mb=16000,
-        runtime=120,
+        mem_mb=8000,
+        runtime=720,
     conda: PHENOPLIER_CFG["conda_env"]
     shell:
         "bash {input.wrapper} {params.conda_env} --out {output.long} "
@@ -502,5 +505,14 @@ rule phenoplier_final_stores:
 
 
 rule phenoplier_traits:
+    """Every per-model GLS summary this workflow produces."""
+    input:
+        PHENOPLIER_COV_FULL + PHENOPLIER_COV_BASE
+        + PHENOPLIER_SAT_FULL + PHENOPLIER_SAT_BASE
+        + PHENOPLIER_FIN_FULL + PHENOPLIER_FIN_BASE
+        + PHENOPLIER_CANONICAL,
+
+
+rule phenoplier_long_table:
     input:
         rules.aggregate_phenoplier_traits.output.long,

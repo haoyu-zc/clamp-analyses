@@ -21,7 +21,7 @@ already live on pico's filesystem, so there is no transfer.
 ```bash
 cd scripts/phenoplier/coverage
 sbatch --array=0-6%2 pico_coverage.sbatch        # big models (rs50 s2/s3, rs75×3, rs100 s2/s3)
-sbatch pico_coverage_tiny.sbatch                 # small fractions (see its header for the array spec)
+sbatch --array=0-2%3 pico_coverage_tiny.sbatch   # small fractions
 ```
 
 phenoplier sizes its step-6/7 process pools from the SLURM cgroup (`-c N`), which

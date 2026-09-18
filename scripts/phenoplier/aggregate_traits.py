@@ -12,15 +12,23 @@ scripts/archs4/traits/aggregate_*_traits.R expect:
 The model family (CLAMPfull_bp vs CLAMPbase) is not in the filename -- it is
 the directory a summary lives in -- so the caller passes each family's files
 under its own flag.
+
+A summary is one row per LV x phenotype (~4 M rows for a 1,728-LV model), so
+the table is streamed: each input is read in chunks and appended to the
+gzipped output, never held in memory as a whole. Expect the output to be tens
+of GB for the full model set.
 """
 
 from __future__ import annotations
 
 import argparse
+import gzip
 import re
 from pathlib import Path
 
 import pandas as pd
+
+CHUNK_ROWS = 500_000
 
 PATTERNS = {
     "coverage": re.compile(r"^cov_rs(?P<fraction>\d+)_seed(?P<seed>\d+)$"),
@@ -42,39 +50,48 @@ def parse_summary_name(path: Path) -> dict:
     raise SystemExit(f"Unrecognised summary name: {path}")
 
 
-def load(paths: list[str], model: str) -> list[pd.DataFrame]:
-    frames = []
+def stream(paths: list[str], model: str, out, state: dict) -> None:
     for raw in paths:
         path = Path(raw)
-        df = pd.read_csv(path, sep="\t", low_memory=False)
-        for field, value in parse_summary_name(path).items():
-            df[field] = value
-        df["model"] = model
-        df["summary"] = str(path)
-        frames.append(df)
-    return frames
+        labels = parse_summary_name(path)
+        labels["model"] = model
+        labels["summary"] = str(path)
+        rows = 0
+        for chunk in pd.read_csv(path, sep="\t", low_memory=False, chunksize=CHUNK_ROWS):
+            for field, value in labels.items():
+                chunk[field] = value
+            if state["columns"] is None:
+                state["columns"] = list(chunk.columns)
+            elif list(chunk.columns) != state["columns"]:
+                raise SystemExit(f"Column mismatch in {path}: {list(chunk.columns)} != {state['columns']}")
+            chunk.to_csv(out, index=False, header=not state["header_written"])
+            state["header_written"] = True
+            rows += len(chunk)
+        state["files"] += 1
+        state["rows"] += rows
+        print(f"{path}: {rows} rows", flush=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", required=True, type=Path)
+    parser.add_argument("--out", required=True, type=Path, help="output .csv.gz")
     parser.add_argument("--clampfull-bp", nargs="*", default=[], help="CLAMPfull_bp summaries")
     parser.add_argument("--clampbase", nargs="*", default=[], help="CLAMPbase summaries")
     parser.add_argument("--canonical", nargs="*", default=[], help="CLAMPfull_canonical summaries")
     args = parser.parse_args()
 
-    frames = (
-        load(args.clampfull_bp, "CLAMPfull_bp")
-        + load(args.clampbase, "CLAMPbase")
-        + load(args.canonical, "CLAMPfull_canonical")
-    )
-    if not frames:
+    if not (args.clampfull_bp or args.clampbase or args.canonical):
         raise SystemExit("No summaries given")
 
-    combined = pd.concat(frames, ignore_index=True)
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    combined.to_csv(args.out, index=False)
-    print(f"{len(frames)} summaries, {len(combined)} rows -> {args.out}")
+    tmp = args.out.with_name(args.out.name + ".tmp")
+    state = {"columns": None, "header_written": False, "files": 0, "rows": 0}
+    with gzip.open(tmp, "wt", newline="") as out:
+        stream(args.clampfull_bp, "CLAMPfull_bp", out, state)
+        stream(args.clampbase, "CLAMPbase", out, state)
+        stream(args.canonical, "CLAMPfull_canonical", out, state)
+    tmp.replace(args.out)
+    print(f"{state['files']} summaries, {state['rows']} rows -> {args.out}")
 
 
 if __name__ == "__main__":

@@ -38,7 +38,14 @@ echo "[start] $(date -Is)  $name  njobs=$NJOBS  ver=$(phenoplier -v 2>&1 | tail 
 [ -s "$summary" ] || phenoplier shortcut gls --input "$rds" --name "$name" \
   --model-namespace clamp --trait-filter biomedical --lv-percentile 0.01 \
   --executor local --n-jobs "$NJOBS"
-[ -s "$store" ] || phenoplier store build --output "$store" --cohort "$COHORT" \
-  --clamp-rds "$rds" --gls-dir "$WS/projects/$name/results/gls/phenoplier/${COHORT}" \
-  --method-name CLAMP
+# Store: build to a .tmp, check it opens, then rename -- an interrupted build
+# must not leave a partial .h5 that the -s guard would skip forever.
+if [ ! -s "$store" ]; then
+  tmp="${store}.tmp.$$"; rm -f "$tmp"
+  phenoplier store build --output "$tmp" --cohort "$COHORT" \
+    --clamp-rds "$rds" --gls-dir "$WS/projects/$name/results/gls/phenoplier/${COHORT}" \
+    --method-name CLAMP
+  python -c "import h5py,sys; h5py.File(sys.argv[1],'r').close()" "$tmp"
+  mv -f "$tmp" "$store"
+fi
 echo "[done] $(date -Is)  $name"

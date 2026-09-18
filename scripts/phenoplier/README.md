@@ -55,7 +55,8 @@ to force a recompute.
 | `phenoplier_coverage` / `phenoplier_saturation` / `phenoplier_finals` | GLS summaries for one family (CLAMPfull_bp + CLAMPbase) |
 | `phenoplier_canonical` | GLS summaries for the three canonical-prior models |
 | `phenoplier_final_stores` | one HDF5 composite study store per final model (`phenoplier store build`) |
-| `phenoplier_traits` | every summary + the cross-model long table (`phenoplier.yaml: report_root`) |
+| `phenoplier_traits` | every per-model summary (coverage, saturation, finals, canonical) |
+| `phenoplier_long_table` | every LV x trait row of every summary, streamed into one gzipped CSV under `phenoplier.yaml: report_root` (tens of GB) |
 | `archs4_traits` | the trait-recovery reports (archs4_traits.smk); pulls the GLS runs it needs |
 
 Dry-run first — a GLS job is hours to a day per model:
@@ -86,8 +87,8 @@ snakemake -n --snakefile workflow/Snakefile phenoplier_finals
 | `setup_env.sh` | one-time: build the `phenoplier-cli-neo` env (phenoplier-cli `main` + rpy2/R) |
 | `run_gls.sh` | one model → one GLS summary (register + init, pin pools, run, gate, publish); driven by the rules |
 | `store_build.sh` | one model → one HDF5 study store; driven by the rules |
-| `verify_summary.py` | completeness gate: expected phenotype count, no zero-p, degenerate-only NaN |
-| `aggregate_traits.{py,sh}` | concatenate per-model summaries into one long cross-model table |
+| `verify_summary.py` | completeness gate: expected phenotype count, full phenotype x LV grid, p-values in (0, 1], degenerate-only NaN |
+| `aggregate_traits.{py,sh}` | stream per-model summaries into one long cross-model table (chunked, gzipped) |
 | `final_models/`, `saturation_k1728/`, `coverage/`, `clampbase/` | the as-run pico `sbatch` recipes (see `RUN_SUMMARY.md`) |
 | `RUN_SUMMARY.md` | **what was actually run** (86 models across 3 CLAMP families) + reproduce-on-pico index |
 

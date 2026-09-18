@@ -54,9 +54,10 @@ phenoplier:
   # reports K=1728 only, so that is all the trait-recovery report needs.
   saturation_k_values: [1728]
 
-  # Cross-model long table (every LV x trait row of every summary) and the
-  # per-family reports live here; the per-model summaries themselves go to the
-  # archs4.yaml `traits.*` directories that archs4_traits.smk consumes.
+  # Cross-model long table (every LV x trait row of every summary; target
+  # phenoplier_long_table, tens of GB gzipped) lives here; the per-model
+  # summaries themselves go to the archs4.yaml `traits.*` directories that
+  # archs4_traits.smk consumes.
   report_root: output/03_model_biology/02_archs4/05_traits
 
   # phenoplier-cli's own step-6 / step-7 process pools, pinned so each GLS job

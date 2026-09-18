@@ -9,7 +9,7 @@
 # regenerates it). Finally `store build`.
 #
 # Usage: _run_clampbase_model.sh <name> <rds_path>
-set -uo pipefail
+set -euo pipefail
 name="$1"; rds="$2"
 
 WS="${PHENOPLIER_HOME:-/pividori_lab/phenoplier_workspace}"
@@ -95,5 +95,7 @@ else
 fi
 
 # Normalize the (verified) summary into the central collection alongside the store.
-cp -f "$summary" "$CENTRAL/summaries/${name}.tsv.gz"
+if ! cp -f "$summary" "$CENTRAL/summaries/${name}.tsv.gz"; then
+  echo "[ERROR] $name: could not publish summary to $CENTRAL/summaries" >&2; exit 1
+fi
 echo "[done] $(date -Is)  $name"
