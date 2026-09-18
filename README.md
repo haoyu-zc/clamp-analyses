@@ -100,8 +100,12 @@ from this DAG. Configuration: `workflow/config/phenoplier.yaml`; details in
 
 ```bash
 snakemake -n --snakefile workflow/Snakefile archs4_traits      # models -> GLS -> reports
-snakemake --profile workflow/profiles/local phenoplier_finals   # the three final models
+snakemake -n --snakefile workflow/Snakefile phenoplier_finals  # GLS on the published finals
 ```
+
+Dry-run first: a GLS job takes hours to a day per model, and any model that is not
+already published under `output/98_final_models` is fitted first (the ARCHS4 fits
+need a cluster, see above).
 
 ### Canonical model + ORA
 

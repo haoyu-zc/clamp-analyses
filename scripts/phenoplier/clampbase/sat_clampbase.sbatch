@@ -24,4 +24,4 @@ mkdir -p "$CLAMPBASE_CENTRAL/logs"
 SAT=/pividori_lab/marc_projects/clamp-analyses-coverage-bp/output/01_model_building/02_archs4/03_saturation_study
 rds="$SAT/study_saturation_rs${rs}_k1728_seed_${seed}/CLAMPbase.rds"
 name="sat_rs${rs}_k1728_seed${seed}_CLAMPbase"
-bash "${CLAMPBASE_RUNONE:-/pividori_lab/haoyu_projects/clampbase_scripts/_run_clampbase_model.sh}" "$name" "$rds"
+bash "${CLAMPBASE_RUNONE:-${SLURM_SUBMIT_DIR:-.}/_run_clampbase_model.sh}" "$name" "$rds"

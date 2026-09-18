@@ -10,10 +10,11 @@ each result with its CLAMP model into a one-file HDF5 study store.
 | GTEx     | `gtex/CLAMPfull_bp.rds`           | 21,613 × 578   |
 | Recount2 | `recount2/CLAMPfull_bp.rds`       | 6,000 × 724    |
 
-`final_models_root` is `workflow/config/phenoplier.yaml: final_models_root`
-(default: Marc's coverage-bp output `.../output/98_final_models`). The three
-models are also wired into `workflow/rules/phenoplier.smk` as the `final/`
-group (targets `phenoplier_final`, `phenoplier_final_stores`).
+`<final_models_root>` was the pico copy of Marc's `output/98_final_models`
+(`CLAMP_FINAL_MODELS` below). In the Snakemake wiring the same models come from
+`archs4.yaml: final_models` / `coverage.clampbase_source` and are produced by the
+coverage rules (`workflow/rules/phenoplier.smk`, targets `phenoplier_finals`,
+`phenoplier_final_stores`); the archs4 pair reuses the coverage rs100/seed1 runs.
 
 ## How it was run
 
@@ -66,12 +67,12 @@ All three tested 2,366 of 4,049 phenotypes (1,683 excluded), 0 zero-p-values,
   non-atomically; three in parallel can race. So step 1 registers all three
   sequentially and step 2 uses `shortcut gls --model <key>` (read-only on the
   registry).
-- **Local executor, not `--cluster`.** `shortcut gls` has no
-  `--cluster/--partition/--qos` passthrough to `workflow gls init`, so its slurm
-  path can't pick up a site profile. Running the whole pipeline locally inside
-  one allocation avoids that and matches the validated path. (The
-  `phenoplier_gls` rule still passes `--cluster` for slurm targets; that path
-  needs the upstream passthrough before it works on a real cluster.)
+- **Local executor, not `--cluster`.** At the time of this run `shortcut gls`
+  had no `--cluster/--partition/--qos` passthrough to `workflow gls init`, so
+  its slurm path could not pick up a site profile. Running the whole pipeline
+  locally inside one allocation avoided that and is the validated path.
+  (phenoplier-cli v0.5.2 has the passthrough; `phenoplier.yaml: target` selects
+  it, but `local` remains the default.)
 - **Step-6/7 pool sizing.** phenoplier sizes its process pools from
   `sched_getaffinity`, so an `sbatch -c N` cgroup both caps and pins them
   correctly. An un-cgrouped run (e.g. bare `nohup`) auto-detects the whole node

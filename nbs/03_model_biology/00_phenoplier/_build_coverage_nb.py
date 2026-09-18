@@ -56,7 +56,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-COV = Path(os.environ.get("COV_SUMMARY_DIR", "/media/data/clamp_coverage/summaries"))
+COV = Path(os.environ.get("COV_SUMMARY_DIR", "../../../output/01_model_building/02_archs4/02_coverage_study/traits/summaries"))
 pat = re.compile(r"cov_rs(\\d+)_seed(\\d+)")
 
 rows = []

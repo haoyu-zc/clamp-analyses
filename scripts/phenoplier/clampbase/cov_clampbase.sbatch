@@ -32,4 +32,4 @@ mkdir -p "$CLAMPBASE_CENTRAL/logs"
 COV=/pividori_lab/marc_projects/clamp-analyses-coverage-bp/output/01_model_building/02_archs4/02_coverage_study
 rds="$COV/${LVL[$rs]}/study_coverage_rs${rs}_seed_${seed}/CLAMPbase.rds"
 name="cov_rs${rs}_seed${seed}_CLAMPbase"
-bash "${CLAMPBASE_RUNONE:-/pividori_lab/haoyu_projects/clampbase_scripts/_run_clampbase_model.sh}" "$name" "$rds"
+bash "${CLAMPBASE_RUNONE:-${SLURM_SUBMIT_DIR:-.}/_run_clampbase_model.sh}" "$name" "$rds"

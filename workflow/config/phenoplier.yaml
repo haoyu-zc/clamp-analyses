@@ -77,7 +77,7 @@ phenoplier:
   # Which of phenoplier-cli's built-in cluster profiles (see its
   # phenoplier/workflow/clusters.py) `shortcut gls` submits its OWN pipeline
   # to. This is independent of how THIS workflow is executed: with the
-  # `local` target each phenoplier_gls job runs its whole pipeline inside the
+  # `local` target each gls_* job runs its whole pipeline inside the
   # allocation this repo's profile gives it (workflow/profiles/slurm), which
   # is the validated path (scripts/phenoplier/RUN_SUMMARY.md). Account /
   # partition specifics stay inside phenoplier-cli's own profiles, not here.

@@ -18,6 +18,15 @@
 #   5. Publish the summary (+ pickle, + the trait filter's exclusion log)
 #      atomically next to each other.
 #
+# Stale projects: phenoplier-cli skips extraction when a model key is already
+# registered, and this script skips the run when the project already holds a
+# summary -- so a refit .rds would silently reuse the old results. The .rds is
+# therefore fingerprinted (sha256) when the project is initialised here, and
+# a later call with a different fingerprint removes the registration, moves
+# the project aside (<project>.stale.<timestamp>) and starts over. Projects
+# that predate this script (no fingerprint on record) are reused as-is, with
+# a warning.
+#
 # phenoplier-cli lives in its own conda env (see setup_env.sh) and `phenoplier`
 # shells out to a bare `snakemake`, whose rules shell out to a bare
 # `phenoplier`, so the env's bin has to be on PATH.
@@ -98,9 +107,29 @@ project="$workspace/projects/$name"
 cfg="$project/pipeline_config.yaml"
 results="$project/results/gls/phenoplier"
 summary="$results/gls-summary-${cohort}.tsv.gz"
+fingerprint_file="$project/clamp_source.sha256"
 
 echo "[start] $(date -Is)  name=$name  rds=$rds  executor=$executor  n_jobs=$n_jobs"
 echo "[version] $(phenoplier -v 2>&1 | tail -1)  workspace=$workspace"
+
+fingerprint="$(sha256sum "$rds" | cut -d' ' -f1)"
+if [[ -d "$project" ]]; then
+  if [[ -s "$fingerprint_file" ]]; then
+    recorded="$(cut -d' ' -f1 < "$fingerprint_file")"
+    if [[ "$recorded" != "$fingerprint" ]]; then
+      stale="${project}.stale.$(date +%Y%m%dT%H%M%S)"
+      echo "[stale] $(date -Is)  model changed since this project was initialised:"
+      echo "[stale]   recorded $recorded"
+      echo "[stale]   current  $fingerprint"
+      echo "[stale]   moving $project -> $stale and re-registering $namespace/$name"
+      phenoplier model remove --force "$namespace/$name" || true
+      mv "$project" "$stale"
+    fi
+  elif [[ -s "$cfg" ]]; then
+    echo "[warn] $name: project predates fingerprinting; reusing it as-is." \
+      "Delete $project to recompute from the current model." >&2
+  fi
+fi
 
 if [[ ! -s "$summary" ]]; then
   if [[ ! -s "$cfg" ]]; then
@@ -108,6 +137,9 @@ if [[ ! -s "$summary" ]]; then
     if [[ -n "$cluster" ]]; then
       cluster_args=(--cluster "$cluster")
     fi
+    # A fresh project always gets a fresh registration: phenoplier-cli skips
+    # extraction when the key already exists, which would keep an old Z.
+    phenoplier model remove --force "$namespace/$name" 2>/dev/null || true
     echo "[init] $(date -Is)  registering model + writing $cfg"
     phenoplier shortcut gls \
       --input "$rds" \
@@ -120,6 +152,7 @@ if [[ ! -s "$summary" ]]; then
       --n-jobs "$n_jobs" \
       ${cluster_args[@]+"${cluster_args[@]}"} \
       --unlock
+    printf '%s  %s\n' "$fingerprint" "$rds" > "$fingerprint_file"
   else
     echo "[init] $(date -Is)  resuming: $cfg exists"
   fi
@@ -160,9 +193,15 @@ if [[ -z "$summary" || ! -s "$summary" ]]; then
 fi
 
 # Gate: complete (expected phenotype count), no zero p-values, NaN only on
-# LVs flagged degenerate. A failed gate leaves NO output, so a requeue resumes
-# step 7 instead of Snakemake believing the model is done.
-python "$here/verify_summary.py" "$summary" "$expected_phenotypes"
+# LVs flagged degenerate. A failed gate publishes nothing AND drops the
+# project's combined summary, so the next attempt re-enters the pipeline
+# (resume-safe: step 7 finishes what is missing, summarize reruns) instead of
+# skipping straight back to the same incomplete file.
+if ! python "$here/verify_summary.py" "$summary" "$expected_phenotypes"; then
+  echo "[ERROR] $name: summary failed the completeness gate; removing it so a requeue resumes step 7" >&2
+  rm -f "$summary" "${summary%.tsv.gz}.pkl.gz"
+  exit 1
+fi
 
 mkdir -p "$(dirname "$summary_out")"
 tmp="${summary_out}.tmp.$$"

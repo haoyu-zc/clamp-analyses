@@ -21,4 +21,4 @@ mkdir -p "$CLAMPBASE_CENTRAL/logs"
 
 rds="/pividori_lab/marc_projects/clamp-analyses/output/98_final_models/clampbase/${t}/CLAMPbase.rds"
 name="final_${t}_CLAMPbase"
-bash "${CLAMPBASE_RUNONE:-/pividori_lab/haoyu_projects/clampbase_scripts/_run_clampbase_model.sh}" "$name" "$rds"
+bash "${CLAMPBASE_RUNONE:-${SLURM_SUBMIT_DIR:-.}/_run_clampbase_model.sh}" "$name" "$rds"

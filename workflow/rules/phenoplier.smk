@@ -64,12 +64,26 @@ PHENOPLIER_SAT_CELLS = [
     if k in PHENOPLIER_SAT_KS
 ]
 
-# Final models: the published full-data fits (archs4.yaml: final_models).
-# CLAMPfull_bp is published by publish_bp_model; CLAMPbase is a published
-# input like the canonical models are.
+# Final models: the published full-data fits. CLAMPfull_bp is what
+# publish_bp_model links into archs4.yaml: final_models.clampfull.bp from the
+# coverage rs100 / reference-seed fit of each dataset. CLAMPbase comes from
+# archs4.yaml: coverage.clampbase_source, i.e. the rule-produced CLAMPbase of
+# each compendium (clamp_gtex, clampbase_recount2, or the archs4 coverage cell
+# named by coverage.clampbase_seed).
+#
+# For archs4 both finals ARE coverage cells the rules above already run GLS
+# on (rs100 / seed 1: publish_bp_model links that exact CLAMPfull_bp fit, and
+# at 100% of the compendium CLAMPbase does not depend on the subsample seed).
+# Their final summaries are therefore copies of the coverage ones, not a
+# second ~20 h GLS run. GTEx / recount2 finals come from the comparator fits,
+# which the coverage trait report never runs GLS on, so those run here.
 A4_FINAL_MODELS = A4_CFG["final_models"]
 A4_FINAL_DATASETS = list(A4_COV_BP_DATASETS)
 A4_FINAL_DATASET_PATTERN = "|".join(A4_FINAL_DATASETS)
+A4_FINAL_LINKED = ["archs4"]
+A4_FINAL_LINKED_PATTERN = "|".join(A4_FINAL_LINKED)
+A4_FINAL_RUN_DATASETS = [d for d in A4_FINAL_DATASETS if d not in A4_FINAL_LINKED]
+A4_FINAL_RUN_PATTERN = "|".join(A4_FINAL_RUN_DATASETS)
 
 
 def a4_final_bp_rds(dataset):
@@ -77,9 +91,22 @@ def a4_final_bp_rds(dataset):
     return f"{spec['root']}/{spec['rds']}"
 
 
+def a4_final_base_seed(dataset):
+    return int(A4_COV_CFG["clampbase_seed"][dataset])
+
+
 def a4_final_base_rds(dataset):
-    spec = A4_FINAL_MODELS["clampbase"][dataset]
-    return f"{spec['root']}/{spec['rds']}"
+    if dataset in A4_FINAL_LINKED:
+        return f"{a4_cov_cell(100, a4_final_base_seed(dataset))}/CLAMPbase.rds"
+    return A4_COV_CFG["clampbase_source"][dataset]["model"]
+
+
+def phenoplier_final_name(dataset, model):
+    """Workspace project that holds a final model's GLS run."""
+    if dataset in A4_FINAL_LINKED:
+        seed = A4_COV_REFERENCE_SEED if model == A4_COV_CFG["model_name"] else a4_final_base_seed(dataset)
+        return f"cov_rs100_seed{seed}_{model}"
+    return f"final_{dataset}_{model}"
 
 
 def phenoplier_store_dir(summary_dir):
@@ -268,7 +295,7 @@ rule gls_bp_saturation_base:
 
 
 rule gls_bp_final_full:
-    """GLS on the published full-data CLAMPfull_bp of one compendium."""
+    """GLS on the published full-data CLAMPfull_bp of a comparator compendium."""
     input:
         manifest=rules.publish_bp_model.output.manifest,
         script="scripts/phenoplier/run_gls.sh",
@@ -278,20 +305,20 @@ rule gls_bp_final_full:
         f"{PHENOPLIER_FIN_FULL_DIR}/final_{{dataset}}.log"
     params:
         rds=lambda wc: a4_final_bp_rds(wc.dataset),
-        name=lambda wc: f"final_{wc.dataset}_{A4_COV_CFG['model_name']}",
+        name=lambda wc: phenoplier_final_name(wc.dataset, A4_COV_CFG["model_name"]),
     threads: int(PHENOPLIER_GLS_RES["threads"])
     resources:
         mem_mb=int(PHENOPLIER_GLS_RES["mem_mb"]),
         runtime=int(PHENOPLIER_GLS_RES["runtime"]),
     wildcard_constraints:
-        dataset=A4_FINAL_DATASET_PATTERN,
+        dataset=A4_FINAL_RUN_PATTERN,
     conda: PHENOPLIER_CFG["conda_env"]
     shell:
         PHENOPLIER_GLS_SHELL
 
 
 rule gls_final_base:
-    """GLS on the published full-data CLAMPbase of one compendium."""
+    """GLS on the full-data CLAMPbase of a comparator compendium."""
     input:
         rds=lambda wc: a4_final_base_rds(wc.dataset),
         script="scripts/phenoplier/run_gls.sh",
@@ -301,16 +328,45 @@ rule gls_final_base:
         f"{PHENOPLIER_FIN_BASE_DIR}/final_{{dataset}}.log"
     params:
         rds=lambda wc, input: input.rds,
-        name=lambda wc: f"final_{wc.dataset}_CLAMPbase",
+        name=lambda wc: phenoplier_final_name(wc.dataset, "CLAMPbase"),
     threads: int(PHENOPLIER_GLS_RES["threads"])
     resources:
         mem_mb=int(PHENOPLIER_GLS_RES["mem_mb"]),
         runtime=int(PHENOPLIER_GLS_RES["runtime"]),
     wildcard_constraints:
-        dataset=A4_FINAL_DATASET_PATTERN,
+        dataset=A4_FINAL_RUN_PATTERN,
     conda: PHENOPLIER_CFG["conda_env"]
     shell:
         PHENOPLIER_GLS_SHELL
+
+
+rule link_bp_final_full:
+    """The archs4 final CLAMPfull_bp is the coverage rs100 / reference-seed
+    fit publish_bp_model links; reuse that cell's GLS summary."""
+    input:
+        summary=f"{PHENOPLIER_COV_FULL_DIR}/cov_rs100_seed{A4_COV_REFERENCE_SEED}.tsv.gz",
+        manifest=rules.publish_bp_model.output.manifest,
+    output:
+        summary=f"{PHENOPLIER_FIN_FULL_DIR}/final_{{dataset}}.tsv.gz",
+    wildcard_constraints:
+        dataset=A4_FINAL_LINKED_PATTERN,
+    shell:
+        "cp -f {input.summary} {output.summary}"
+
+
+rule link_final_base:
+    """The archs4 final CLAMPbase is the coverage rs100 CLAMPbase (seed from
+    archs4.yaml: coverage.clampbase_seed); reuse that cell's GLS summary."""
+    input:
+        summary=lambda wc: (
+            f"{PHENOPLIER_COV_BASE_DIR}/cov_rs100_seed{a4_final_base_seed(wc.dataset)}.tsv.gz"
+        ),
+    output:
+        summary=f"{PHENOPLIER_FIN_BASE_DIR}/final_{{dataset}}.tsv.gz",
+    wildcard_constraints:
+        dataset=A4_FINAL_LINKED_PATTERN,
+    shell:
+        "cp -f {input.summary} {output.summary}"
 
 
 rule gls_canonical:
@@ -356,7 +412,7 @@ rule store_bp_final_full:
         f"{phenoplier_store_dir(PHENOPLIER_FIN_FULL_DIR)}/final_{{dataset}}_{A4_COV_CFG['model_name']}.log"
     params:
         rds=lambda wc: a4_final_bp_rds(wc.dataset),
-        name=lambda wc: f"final_{wc.dataset}_{A4_COV_CFG['model_name']}",
+        name=lambda wc: phenoplier_final_name(wc.dataset, A4_COV_CFG["model_name"]),
     resources:
         mem_mb=int(PHENOPLIER_STORE_RES["mem_mb"]),
         runtime=int(PHENOPLIER_STORE_RES["runtime"]),
@@ -377,7 +433,7 @@ rule store_final_base:
         f"{phenoplier_store_dir(PHENOPLIER_FIN_BASE_DIR)}/final_{{dataset}}_CLAMPbase.log"
     params:
         rds=lambda wc: a4_final_base_rds(wc.dataset),
-        name=lambda wc: f"final_{wc.dataset}_CLAMPbase",
+        name=lambda wc: phenoplier_final_name(wc.dataset, "CLAMPbase"),
     resources:
         mem_mb=int(PHENOPLIER_STORE_RES["mem_mb"]),
         runtime=int(PHENOPLIER_STORE_RES["runtime"]),
@@ -397,6 +453,7 @@ rule aggregate_phenoplier_traits:
     input:
         clampfull_bp=PHENOPLIER_COV_FULL + PHENOPLIER_SAT_FULL + PHENOPLIER_FIN_FULL,
         clampbase=PHENOPLIER_COV_BASE + PHENOPLIER_SAT_BASE + PHENOPLIER_FIN_BASE,
+        canonical=PHENOPLIER_CANONICAL,
         script="scripts/phenoplier/aggregate_traits.py",
         wrapper="scripts/phenoplier/aggregate_traits.sh",
     output:
@@ -412,7 +469,7 @@ rule aggregate_phenoplier_traits:
     shell:
         "bash {input.wrapper} {params.conda_env} --out {output.long} "
         "--clampfull-bp {input.clampfull_bp} --clampbase {input.clampbase} "
-        "> {log} 2>&1"
+        "--canonical {input.canonical} > {log} 2>&1"
 
 
 # ============================================================

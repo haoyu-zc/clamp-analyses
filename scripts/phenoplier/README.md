@@ -24,8 +24,9 @@ written down here:
 | `gls_bp_coverage_base` | `a4_cov_cell()/CLAMPbase.rds` | `coverage.clampbase_dir/cov_rs<f>_seed<s>.tsv.gz` |
 | `gls_bp_saturation_full` | `a4_sat_model_dir()` CLAMPfull_bp, after `validate_bp_saturation_model` | `saturation.clampfull_bp_dir/sat_rs<f>_k<k>_seed<s>.tsv.gz` |
 | `gls_bp_saturation_base` | `a4_sat_base_rds()` | `saturation.clampbase_dir/sat_rs<f>_k<k>_seed<s>.tsv.gz` |
-| `gls_bp_final_full` | `final_models.clampfull.bp.<ds>`, after `publish_bp_model` | `finals.clampfull_bp_dir/final_<ds>.tsv.gz` |
-| `gls_final_base` | `final_models.clampbase.<ds>` (published input) | `finals.clampbase_dir/final_<ds>.tsv.gz` |
+| `gls_bp_final_full` | gtex / recount2: `final_models.clampfull.bp.<ds>`, after `publish_bp_model` | `finals.clampfull_bp_dir/final_<ds>.tsv.gz` |
+| `gls_final_base` | gtex / recount2: `coverage.clampbase_source.<ds>` (`clamp_gtex`, `clampbase_recount2`) | `finals.clampbase_dir/final_<ds>.tsv.gz` |
+| `link_bp_final_full`, `link_final_base` | archs4: the finals *are* the coverage rs100/seed1 cells, so their summaries are copied, not re-run | `finals.*_dir/final_archs4.tsv.gz` |
 | `gls_canonical` | `A4_CAN_FINAL_ROOT/<ds>/CLAMPfull_canonical.rds` | beside the model: `<ds>/traits/canon_<ds>.tsv.gz` |
 | `store_bp_final_full`, `store_final_base` | the finals above | `finals.*_dir/../stores/final_<ds>_<model>.h5` |
 
@@ -40,7 +41,12 @@ snakemake --profile workflow/profiles/local archs4_traits
 fits any missing model, runs GLS on it and renders the trait-recovery reports in
 one DAG. Workspace project names (`cov_rs5_seed2_CLAMPfull_bp`, …) match the
 as-run pico names, so a workspace that already holds a finished project is reused
-rather than recomputed.
+rather than recomputed. `run_gls.sh` fingerprints the `.rds` it registered
+(`<project>/clamp_source.sha256`); if a model is refit, the next run moves the old
+project aside (`<project>.stale.<timestamp>`), re-registers the model and starts
+over. Projects made before this wiring carry no fingerprint and are reused as-is
+(with a warning) — delete the project and `phenoplier model remove clamp/<name>`
+to force a recompute.
 
 ### Targets
 

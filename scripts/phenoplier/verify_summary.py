@@ -29,7 +29,7 @@ zero_p = int((d["pvalue"] == 0).sum())
 nan_p = d["pvalue"].isna()
 nan_total = int(nan_p.sum())
 if "lv_degenerate" in d.columns:
-    nan_bad = int((nan_p & ~d["lv_degenerate"].fillna(False)).sum())
+    nan_bad = int((nan_p & ~d["lv_degenerate"].fillna(False).astype(bool)).sum())
 else:
     nan_bad = nan_total
 
