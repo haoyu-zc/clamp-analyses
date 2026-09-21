@@ -46,7 +46,7 @@ usage: $0 --rds <model.rds> --name <project> --summary-out <out.tsv.gz> [options
   --cluster NAME              phenoplier-cli cluster profile, slurm only ('')
   --n-jobs N                  cores for the local executor (4)
   --workers-step6 N --blas-step6 N --workers-step7 N --blas-step7 N  (1 8 6 2)
-Workspace: \$PHENOPLIER_HOME (default \$HOME/phenoplier).
+  --workspace PATH            phenoplier workspace (default \$PHENOPLIER_HOME, then \$HOME/phenoplier)
 USAGE
   exit 2
 }
@@ -68,12 +68,14 @@ blas_step7=2
 rds=""
 name=""
 summary_out=""
+workspace_arg=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rds) rds="$2"; shift 2 ;;
     --name) name="$2"; shift 2 ;;
     --summary-out) summary_out="$2"; shift 2 ;;
+    --workspace) workspace_arg="$2"; shift 2 ;;
     --conda-env) conda_env="$2"; shift 2 ;;
     --require-version) require_version="$2"; shift 2 ;;
     --namespace) namespace="$2"; shift 2 ;;
@@ -96,8 +98,16 @@ done
 [[ -f "$rds" ]] || { echo "model not found: $rds" >&2; exit 1; }
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-workspace="${PHENOPLIER_HOME:-$HOME/phenoplier}"
+# The workspace comes from the workflow config (phenoplier.yaml: workspace)
+# when set, so cluster jobs do not depend on an inherited environment; else
+# from PHENOPLIER_HOME; else phenoplier-cli's default.
+workspace="${workspace_arg:-${PHENOPLIER_HOME:-$HOME/phenoplier}}"
 export PHENOPLIER_HOME="$workspace" PHENOPLIER_ROOT_DIR="$workspace"
+if [[ ! -f "$workspace/config.toml" ]]; then
+  echo "[ERROR] no phenoplier workspace at $workspace (missing config.toml):" \
+    "run 'phenoplier workspace init' + 'workspace link' there, or set phenoplier.yaml: workspace" >&2
+  exit 1
+fi
 
 # shellcheck disable=SC1091
 source "$(conda info --base)/etc/profile.d/conda.sh"

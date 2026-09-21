@@ -124,6 +124,38 @@ recomputing them:
 snakemake --touch --cores 1 --snakefile workflow/Snakefile archs4_canonical_ora
 ```
 
+## Running on a Slurm cluster
+
+`workflow/profiles/slurm/config.yaml` holds the portable part of a cluster setup
+(executor, job limits, memory pools, per-rule overrides for the ARCHS4 fits). Account,
+partition and QOS are site-specific and stay out of the repo: derive a user-owned
+profile from it, e.g. `~/.config/snakemake/clamp-slurm/config.yaml`, and add
+
+```yaml
+default-resources:
+  - slurm_account=<account>
+  - slurm_partition=<partition>
+```
+
+plus any `set-resources` a partition needs. The `snakemake` env already includes
+`snakemake-executor-plugin-slurm`. Run the scheduler from a login node inside
+`tmux`/`screen` (it lives for the whole DAG), always dry-running first:
+
+```bash
+conda activate snakemake
+snakemake --profile ~/.config/snakemake/clamp-slurm -n <target>
+snakemake --profile ~/.config/snakemake/clamp-slurm <target>
+```
+
+The conda envs must be visible from the compute nodes; `use-conda` looks them up by
+name. `scripts/phenoplier/README.md` §6 has the complete site-profile example
+(including the PhenoPLIER GLS jobs) and the monitoring/resume notes.
+
+<!-- [MARC: ARCHS4 on a cluster — required staged inputs (raw h5, 00_preprocess
+outputs, data/pathways gene sets), memory partition for the 500 GB fits, and how
+precomputed models are adopted (the local profile mentions `--touch
+archs4_precomputed`, which does not exist as a rule).] -->
+
 ## Running a single notebook
 
 Each notebook-backed rule runs one specific notebook and writes the executed copy

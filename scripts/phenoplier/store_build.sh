@@ -11,8 +11,8 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<USAGE
-usage: $0 --rds <model.rds> --name <project> --store-out <out.h5> [--conda-env NAME] [--require-version X.Y.Z] [--cohort NAME]
-Workspace: \$PHENOPLIER_HOME (default \$HOME/phenoplier).
+usage: $0 --rds <model.rds> --name <project> --store-out <out.h5> [--conda-env NAME] [--require-version X.Y.Z] [--cohort NAME] [--workspace PATH]
+Workspace: --workspace, else \$PHENOPLIER_HOME, else \$HOME/phenoplier.
 USAGE
   exit 2
 }
@@ -23,12 +23,14 @@ cohort=phenomexcan_rapid_gwas
 rds=""
 name=""
 store_out=""
+workspace_arg=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --rds) rds="$2"; shift 2 ;;
     --name) name="$2"; shift 2 ;;
     --store-out) store_out="$2"; shift 2 ;;
+    --workspace) workspace_arg="$2"; shift 2 ;;
     --conda-env) conda_env="$2"; shift 2 ;;
     --require-version) require_version="$2"; shift 2 ;;
     --cohort) cohort="$2"; shift 2 ;;
@@ -39,7 +41,7 @@ done
 [[ -n "$rds" && -n "$name" && -n "$store_out" ]] || usage
 [[ -f "$rds" ]] || { echo "model not found: $rds" >&2; exit 1; }
 
-workspace="${PHENOPLIER_HOME:-$HOME/phenoplier}"
+workspace="${workspace_arg:-${PHENOPLIER_HOME:-$HOME/phenoplier}}"
 export PHENOPLIER_HOME="$workspace" PHENOPLIER_ROOT_DIR="$workspace"
 
 # shellcheck disable=SC1091

@@ -15,6 +15,13 @@ phenoplier:
   # different releases are not comparable.
   version: 0.5.2
 
+  # phenoplier-cli workspace (the directory holding config.toml, data/,
+  # models/, projects/; see scripts/phenoplier/README.md "Workspace"). Empty
+  # means "whatever PHENOPLIER_HOME says, else ~/phenoplier". Set it here for
+  # cluster runs so every job resolves the same workspace regardless of the
+  # environment sbatch hands it, e.g. /pividori_lab/phenoplier_workspace.
+  workspace: ""
+
   # Workspace namespace the CLAMP models are registered under
   # (`phenoplier model register --namespace`).
   namespace: clamp

@@ -48,6 +48,11 @@ PHENOPLIER_TRAIT_FILTER = PHENOPLIER_CFG["trait_filter"]
 PHENOPLIER_EXPECTED_PHENOTYPES = int(
     PHENOPLIER_CFG["expected_phenotypes"][PHENOPLIER_TRAIT_FILTER]
 )
+# Optional explicit workspace; when empty the runner scripts fall back to
+# PHENOPLIER_HOME and then phenoplier-cli's default (~/phenoplier).
+PHENOPLIER_WORKSPACE_ARG = (
+    f"--workspace {PHENOPLIER_CFG['workspace']} " if PHENOPLIER_CFG.get("workspace") else ""
+)
 
 # Where the summaries land: the directories archs4_traits.smk consumes.
 A4_TRAIT_DIRS = A4_CFG["traits"]
@@ -161,6 +166,7 @@ PHENOPLIER_FIN_STORES = [
 PHENOPLIER_GLS_SHELL = "".join([
     "bash {input.script} --rds {params.rds} --name {params.name} ",
     "--summary-out {output.summary} --n-jobs {threads} ",
+    PHENOPLIER_WORKSPACE_ARG,
     f"--conda-env {PHENOPLIER_CFG['conda_env']} ",
     f"--require-version {PHENOPLIER_CFG['version']} ",
     f"--namespace {PHENOPLIER_CFG['namespace']} ",
@@ -180,6 +186,7 @@ PHENOPLIER_GLS_SHELL = "".join([
 PHENOPLIER_STORE_SHELL = "".join([
     "bash {input.script} --rds {params.rds} --name {params.name} ",
     "--store-out {output.store} ",
+    PHENOPLIER_WORKSPACE_ARG,
     f"--conda-env {PHENOPLIER_CFG['conda_env']} ",
     f"--require-version {PHENOPLIER_CFG['version']} ",
     f"--cohort {PHENOPLIER_CFG['cohort']} ",
