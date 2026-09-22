@@ -36,7 +36,10 @@ sc_probability <- h5[["/meta/samples/singlecellprobability"]]$read()
 h5$close_all()
 
 keep <- which(sc_probability < sc_max)
-sample_names_all <- all_samples[keep]
+sample_names_all <- filtered_sample_names(dirname(metadata_path), sc_max)
+if (!identical(sample_names_all, all_samples[keep])) {
+  stop("Filtered sample names disagree with the single-cell filter applied to ", h5_path)
+}
 series_all <- all_series[keep]
 n_total <- length(keep)
 

@@ -106,15 +106,22 @@ fbm_filtered <- filter_result$fbm_filtered
 gene_symbols_kept <- gene_symbols_unique[filter_result$kept_rows]
 message("Filtered dataset: ", nrow(fbm_filtered), " genes x ", ncol(fbm_filtered), " samples")
 
+sample_names_kept <- sample_names[samples_idx]
+stopifnot(length(sample_names_kept) == ncol(fbm_filtered), !anyDuplicated(sample_names_kept))
+
 saveRDS(
   list(
     gene_symbols_thin = gene_symbols_kept,
     gene_lengths = gene_lengths,
     n_genes_thin = length(gene_symbols_kept),
-    n_samples = n_samples
+    n_samples = n_samples,
+    sample_names = sample_names_kept,
+    keep_samples_idx = samples_idx,
+    single_cell_probability_max = sc_max
   ),
   file.path(out_dir, "metadata_filtered.rds")
 )
+saveRDS(sample_names_kept, file.path(out_dir, "samples_filtered.rds"))
 
 row_stats$row_means <- row_stats$row_means[filter_result$kept_rows]
 row_stats$row_variances <- row_stats$row_variances[filter_result$kept_rows]

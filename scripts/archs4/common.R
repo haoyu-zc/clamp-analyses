@@ -90,8 +90,38 @@ build_prior <- function(genes, gmts) {
   list(path_mat = path_mat, matched = matched)
 }
 
+filtered_sample_names <- function(preprocess_dir, sc_max = 0.5) {
+  filtered_path <- file.path(preprocess_dir, "metadata_filtered.rds")
+  if (file.exists(filtered_path)) {
+    meta <- readRDS(filtered_path)
+    if (!is.null(meta$sample_names)) return(meta$sample_names)
+  }
+  meta_path <- file.path(preprocess_dir, "metadata.rds")
+  if (!file.exists(meta_path)) {
+    stop("Cannot resolve filtered sample names: no metadata in ", preprocess_dir)
+  }
+  meta <- readRDS(meta_path)
+  if (is.null(meta$sample_names) || is.null(meta$single_cell_probability)) {
+    stop("metadata.rds lacks sample_names or single_cell_probability: ", meta_path)
+  }
+  meta$sample_names[meta$single_cell_probability < sc_max]
+}
+
+validate_sample_names <- function(sample_names, n_columns) {
+  if (length(sample_names) != n_columns) {
+    stop("B has ", n_columns, " columns but ", length(sample_names), " sample names were given.")
+  }
+  if (anyNA(sample_names) || !all(nzchar(sample_names))) stop("Sample names contain NA or empty values.")
+  if (anyDuplicated(sample_names)) {
+    dupes <- unique(sample_names[duplicated(sample_names)])
+    stop("Sample names are not unique; first duplicates: ", paste(utils::head(dupes, 5L), collapse = ", "))
+  }
+  invisible(sample_names)
+}
+
 # Writes a CLAMP result in the standard model layout.
 write_clamp_model <- function(res, model_dir, genes, sample_names, rds_path = NULL) {
+  validate_sample_names(sample_names, ncol(res$B))
   res$Z <- data.frame(res$Z)
   rownames(res$Z) <- genes
   res$B <- data.frame(res$B)
