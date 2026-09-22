@@ -5,6 +5,8 @@ A4_DD_COMPUTE = A4_DD_CFG["compute_root"]
 A4_DD_REPORT = A4_DD_CFG["report_root"]
 A4_DD_NLVS = ",".join(map(str, A4_DD_CFG["n_top_lvs"]))
 A4_DD_NGENES = ",".join(map(str, A4_DD_CFG["n_top_genes"]))
+A4_DD_CLAMPFULL_ROOT = os.path.dirname(A4_CAN_FINAL_ROOT)
+A4_DD_LINCS_TSV_PRIORS = A4_DD_CFG["lincs_tsv_priors"]
 
 def dd_model_dir(compendium):
     return f"{A4_CAN_FINAL_ROOT}/{compendium}"
@@ -53,6 +55,32 @@ rule project_lincs_drug_diseases:
     shell:
         "python {input.script} --model-dir {params.model_dir} --model-name {A4_CAN_MODEL_NAME} --lincs-file {input.lincs} "
         "--compendium {wildcards.compendium} --output {output}"
+
+rule fetch_drugbank_drug_diseases:
+    output:
+        A4_DD_CFG["drugbank_tsv"]
+    log:
+        A4_DD_CFG["drugbank_tsv"] + ".log"
+    shell:
+        "curl --fail --location --retry 3 '{A4_DD_CFG[drugbank_url]}' --output {output}.download 2> {log} && "
+        "echo '{A4_DD_CFG[drugbank_sha256]}  {output}.download' | sha256sum --check --status && "
+        "mv {output}.download {output}"
+
+rule export_lincs_projection_tsv_drug_diseases:
+    input:
+        lincs=f"{A4_DD_CLAMPFULL_ROOT}/{{prior}}/{{compendium}}/lincs-projection.pkl",
+        drugbank=rules.fetch_drugbank_drug_diseases.output,
+        script="scripts/archs4/drug_diseases/export_lincs_projection_tsv.py"
+    output:
+        f"{A4_DD_CLAMPFULL_ROOT}/{{prior}}/{{compendium}}/lincs-projection.tsv"
+    wildcard_constraints:
+        prior="|".join(A4_DD_LINCS_TSV_PRIORS),
+        compendium=A4_CAN_COMPENDIUM_PATTERN
+    resources:
+        mem_mb=8000, runtime=60
+    conda: "clamp-analyses"
+    shell:
+        "python {input.script} --lincs-projection {input.lincs} --drugbank {input.drugbank} --output {output}"
 
 # ============================================================
 # Step 2: predict drug-disease associations (module-based per compendium,
@@ -175,6 +203,7 @@ rule archs4_drug_diseases:
     input:
         expand(f"{A4_CAN_FINAL_ROOT}/{{compendium}}/{A4_CAN_MODEL_NAME}.rds", compendium=A4_CAN_COMPENDIA),
         expand(f"{A4_CAN_FINAL_ROOT}/{{compendium}}/lincs-projection.pkl", compendium=A4_CAN_COMPENDIA),
+        expand(f"{A4_DD_CLAMPFULL_ROOT}/{{prior}}/{{compendium}}/lincs-projection.tsv", prior=A4_DD_LINCS_TSV_PRIORS, compendium=A4_CAN_COMPENDIA),
         rules.aggregate_drug_diseases.output,
         rules.prepare_three_model_comparison_data.output,
         rules.three_model_comparison_report.output,
