@@ -15,7 +15,7 @@ Installs Conda if needed, creates all three environments, and installs the pinne
 
 > [!WARNING]
 > Requires CLAMP commit
-> [`818e13ba55d66840e0710c3f1ac15f6d97e1dd8b`](https://github.com/chikinalab/CLAMP/commit/818e13ba55d66840e0710c3f1ac15f6d97e1dd8b) —
+> [`748559ae6d4a9e2982d8f4488bae616fe390195a`](https://github.com/chikinalab/CLAMP/commit/748559ae6d4a9e2982d8f4488bae616fe390195a) —
 > do not update it independently.
 
 <details>

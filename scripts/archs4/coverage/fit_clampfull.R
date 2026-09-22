@@ -9,6 +9,9 @@ suppressPackageStartupMessages({
   library(jsonlite)
 })
 
+script_dir <- dirname(normalizePath(sub("^--file=", "", commandArgs(FALSE)[grep("^--file=", commandArgs(FALSE))])))
+source(file.path(script_dir, "..", "common.R"))
+
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
 # Parses named command-line arguments.
@@ -84,6 +87,7 @@ k_path <- if (is.null(clamp_k_arg)) required_arg(args, "k") else args$k
 base_path <- required_arg(args, "base_model")
 out_dir <- required_arg(args, "out_dir")
 seed <- as.integer(required_arg(args, "seed"))
+model_name <- args$model_name %||% "CLAMPfull_bp"
 max_iter <- as.integer(args$max_iter %||% 5000L)
 multiplier <- as.numeric(args$multiplier %||% 100)
 fraction <- as.integer(args$fraction %||% 100L)
@@ -110,6 +114,11 @@ if (!is.null(args$metadata)) {
   subsample <- readRDS(required_arg(args, "subsample_info"))
   genes <- metadata$gene_symbols_thin
   sample_names <- subsample$sample_names
+  expected_sample_names <- filtered_sample_names(dirname(args$metadata))[subsample$sample_idx]
+  if (!identical(sample_names, expected_sample_names)) {
+    message("subsample_info sample_names disagree with the filtered list; using the filtered list")
+    sample_names <- expected_sample_names
+  }
   backing <- sub("\\.bk$", "", required_arg(args, "fbm_backing"))
   Y <- bigstatsr::FBM(
     nrow = length(genes),
@@ -155,17 +164,16 @@ message(
   "; prior sets=", ncol(prior_mat)
 )
 
-full_res <- CLAMPfull(
-  Y = Y,
-  svdres = svd_res,
-  priorMat = prior_mat,
-  clamp.base.result = base_res,
-  use_cpp = TRUE,
-  trace = TRUE,
-  multiplier = multiplier,
-  max.iter = max_iter,
-  clamp_k = clamp_k
+full_args <- list(
+  Y = Y, svdres = svd_res, priorMat = prior_mat,
+  clamp.base.result = base_res, trace = TRUE,
+  multiplier = multiplier, max.iter = max_iter, rseed = seed
 )
+full_formals <- names(formals(CLAMP::CLAMPfull))
+rank_arg <- if ("clamp_k" %in% full_formals) "clamp_k" else "k"
+full_args[[rank_arg]] <- clamp_k
+if ("use_cpp" %in% full_formals) full_args$use_cpp <- TRUE
+full_res <- do.call(CLAMP::CLAMPfull, full_args)
 
 full_res$Z <- data.frame(full_res$Z, check.names = FALSE)
 rownames(full_res$Z) <- genes
@@ -174,9 +182,14 @@ colnames(full_res$B) <- sample_names
 if (is.null(full_res$summary) || !nrow(full_res$summary)) {
   stop("CLAMPfull returned no summary; summary.csv would be empty")
 }
-full_res$summary <- full_res$summary %>%
-  rename(LV = LV_index) %>%
-  mutate(LV = paste0("LV", LV))
+if ("LV_index" %in% colnames(full_res$summary)) {
+  full_res$summary <- full_res$summary %>%
+    rename(LV = LV_index) %>%
+    mutate(LV = paste0("LV", LV))
+}
+if (!"LV" %in% colnames(full_res$summary)) {
+  stop("CLAMPfull summary has no LV column: ", paste(colnames(full_res$summary), collapse = ", "))
+}
 
 if (!identical(dim(full_res$Z), c(length(genes), clamp_k))) {
   stop("Unexpected Z dimensions: ", paste(dim(full_res$Z), collapse = "x"))
@@ -191,7 +204,7 @@ if (anyNA(full_res$B) || any(!is.finite(as.matrix(full_res$B)))) {
   stop("B contains missing or non-finite values")
 }
 
-rds_path <- file.path(tmp_dir, "CLAMPfull_bp.rds")
+rds_path <- file.path(tmp_dir, paste0(model_name, ".rds"))
 b_path <- file.path(tmp_dir, "B.csv")
 z_path <- file.path(tmp_dir, "Z.csv")
 summary_path <- file.path(tmp_dir, "summary.csv")
