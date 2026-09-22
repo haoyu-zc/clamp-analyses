@@ -1,5 +1,5 @@
 CLAMP_REPO <- "chikinalab/CLAMP"
-CLAMP_REF <- "818e13ba55d66840e0710c3f1ac15f6d97e1dd8b"
+CLAMP_REF <- "748559ae6d4a9e2982d8f4488bae616fe390195a"
 
 args <- commandArgs(trailingOnly = TRUE)
 unknown_args <- setdiff(args, "--check")
