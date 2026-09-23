@@ -8,6 +8,9 @@ suppressPackageStartupMessages({
   library(CLAMP)
 })
 
+script_dir <- dirname(normalizePath(sub("^--file=", "", commandArgs(FALSE)[grep("^--file=", commandArgs(FALSE))])))
+source(file.path(script_dir, "..", "common.R"))
+
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
 parse_cli <- function(args = commandArgs(trailingOnly = TRUE)) {
@@ -42,7 +45,7 @@ metadata_path <- required_arg(args, "metadata")
 subsample_path <- required_arg(args, "subsample_info")
 fbm_backing <- required_arg(args, "fbm_backing")
 out_dir <- required_arg(args, "out_dir")
-clamp_k <- as.integer(required_arg(args, "clamp_k"))
+clamp_k <- as.integer(args$clamp_k %||% readRDS(required_arg(args, "k")))
 seed <- as.integer(required_arg(args, "seed"))
 fraction <- as.integer(args$fraction %||% NA_integer_)
 seed_index <- as.integer(args$seed_index %||% 1L)
@@ -68,6 +71,11 @@ metadata <- readRDS(metadata_path)
 subsample <- readRDS(subsample_path)
 genes <- metadata$gene_symbols_thin
 sample_names <- subsample$sample_names
+expected_sample_names <- filtered_sample_names(dirname(metadata_path))[subsample$sample_idx]
+if (!identical(sample_names, expected_sample_names)) {
+  message("subsample_info sample_names disagree with the filtered list; using the filtered list")
+  sample_names <- expected_sample_names
+}
 backing <- sub("\\.bk$", "", fbm_backing)
 Y <- bigstatsr::FBM(
   nrow = length(genes),
@@ -91,12 +99,10 @@ message(
   nrow(Y), " genes x ", ncol(Y), " samples"
 )
 
-base_res <- CLAMPbase(
-  Y = Y,
-  svdres = svd_res,
-  trace = TRUE,
-  clamp_k = clamp_k
-)
+base_args <- list(Y = Y, svdres = svd_res, trace = TRUE, rseed = seed)
+rank_arg <- if ("clamp_k" %in% names(formals(CLAMP::CLAMPbase))) "clamp_k" else "k"
+base_args[[rank_arg]] <- clamp_k
+base_res <- do.call(CLAMP::CLAMPbase, base_args)
 
 if (!identical(dim(base_res$Z), c(length(genes), clamp_k))) {
   stop("Unexpected Z dimensions: ", paste(dim(base_res$Z), collapse = "x"))

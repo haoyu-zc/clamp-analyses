@@ -79,6 +79,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-dir", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--samples", type=Path)
     args = parser.parse_args()
 
     model_dir = args.model_dir.resolve()
@@ -120,9 +121,22 @@ def main() -> None:
 
     b_path = required["B"]
     with b_path.open(newline="") as handle:
-        b_columns = len(next(csv.reader(handle)))
+        b_header = next(csv.reader(handle))
+    b_columns = len(b_header)
     if b_columns != samples + 1:
         raise SystemExit("B column count does not match the model manifest")
+
+    b_samples_checked = False
+    if args.samples is not None:
+        expected = [line.strip() for line in args.samples.read_text().splitlines() if line.strip()]
+        found = b_header[1:]
+        if found != expected:
+            mismatches = sum(1 for a, b in zip(found, expected) if a != b)
+            raise SystemExit(
+                f"B column names do not match {args.samples}: "
+                f"{mismatches} of {len(expected)} positions differ"
+            )
+        b_samples_checked = True
 
     result = {
         "schema_version": 1,
@@ -131,6 +145,7 @@ def main() -> None:
         "dataset": manifest["dataset"],
         "fraction": manifest["fraction"],
         "seed_index": manifest["seed_index"],
+        "b_sample_names_verified": b_samples_checked,
         "genes": genes,
         "samples": samples,
         "latent_variables": latent_variables,

@@ -220,6 +220,10 @@ archs4:
 
   drug_diseases:
     data_dir: data/drug_disease_associations
+    drugbank_tsv: data/drug_disease_associations/drugbank.tsv
+    drugbank_url: "https://raw.githubusercontent.com/dhimmel/drugbank/6b9ae386d6ba4a0eca2d66d4b0337a6e90fe81f4/data/drugbank.tsv"
+    drugbank_sha256: 66050d51cb7a614ea6e951d630d2cf40893b75026ebe8f56c6cc37c0e73c3edd
+    lincs_tsv_priors: [bp, canonical]
     spredixcan_dir: data/phenomexcan/gene_assoc/spredixcan/pkl
     prior:
       c2_all: data/pathways/c2.all.v2026.1.Hs.symbols.gmt

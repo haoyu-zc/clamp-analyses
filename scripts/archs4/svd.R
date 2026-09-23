@@ -46,6 +46,13 @@ svd_res$u <- svd_res$u[, valid_idx, drop = FALSE]
 svd_res$v <- svd_res$v[, valid_idx, drop = FALSE]
 saveRDS(svd_res, ensure_parent(svd_out))
 
-clamp_k <- as.integer(num.pc(list(d = svd_res$d)) * k_multiplier)
+eigenvalues <- sort(svd_res$d^2 / (n_samples - 1), decreasing = TRUE)
+
+clamp_k <- PCAtools::chooseGavishDonoho(
+  .dim = c(n_genes, n_samples),
+  var.explained = eigenvalues,
+  noise = median(eigenvalues)
+) * k_multiplier
+
 message("Inferred CLAMP K = ", clamp_k)
 saveRDS(clamp_k, ensure_parent(k_out))
