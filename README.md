@@ -81,6 +81,13 @@ fits need ~500 GB RAM and run on Slurm, not a workstation.
 The GO:BP coverage and saturation campaigns are maintained independently. Their
 published full-data models remain under `output/98_final_models/clampfull/bp/`.
 
+These fits require `data/pathways/go_bp.Hs.symbols.gmt` (SHA-256
+`33e559df968d0d8c2028c0f735624555dc2edbebe955648c3351dfa31cfd2e2a`).
+Snakemake generates this file when missing from the GOALL Biological Process
+mapping in `org.Hs.eg.db` 3.20.0 and term names in `GO.db` 3.20.0, then verifies
+its checksum. The `pathway_prior` rule separately downloads the Enrichr file
+`GO_Biological_Process_2025.gmt`, which is not interchangeable with this input.
+
 Canonical-prior CLAMPfull models are published under
 `output/98_final_models/clampfull/canonical/`, one each for ARCHS4, GTEx, and
 recount2. They are evaluated by ORA against GO:BP, canonical, Reactome, and
