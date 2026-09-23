@@ -129,6 +129,38 @@ a notebook's cells alone won't trigger a re-run. Force one with `-f`/`--forcerun
 snakemake --cores 4 --use-conda --snakefile workflow/Snakefile -f <target>
 ```
 
+## Rebuilding publication figures from notebooks
+
+Run these from the repository root in the `clamp-analyses` environment after the
+upstream analyses have produced their input files:
+
+```bash
+for name in fig2 fig3 supp1 supp2 supp3 supp4 supp5 supp6 supp7; do
+  papermill "nbs/99_panels/${name}.ipynb" "nbs/99_panels/${name}.executed.ipynb" -k ir
+done
+```
+
+Each notebook writes PDF, PNG, and SVG files to `output/99_panels/<name>/`.
+Figure 2 can also run through its Snakemake rule:
+
+```bash
+snakemake output/99_panels/fig2/fig2.pdf --snakefile workflow/Snakefile --cores 4 --use-conda -R fig2_panel
+```
+
+| Figure | Required upstream data |
+| --- | --- |
+| Figure 2 | Pseudobulk benchmark, grouped cross-validation, cell-type recovery, donor-bulk recovery, and GTEx panel tables listed in its input-path cell and `workflow/rules/panels.smk`. |
+| Figure 3 | ARCHS4 coverage, saturation, drug-disease, projection, and CRISPR-Cas9 results under `output/03_model_biology/02_archs4/`. |
+| Supplements 1 and 3 | Pseudobulk benchmark and recovery tables, GTEx clustering and biology tables; Supplement 1 also uses pseudobulk runtime data, and Supplement 3 uses GTEx runtime data. |
+| Supplement 2 | Donor-bulk recovery and UMAP tables under `output/03_model_biology/00_pseudobulk/06_donor_bulk_recovery/`. |
+| Supplement 4 | ARCHS4 coverage and saturation tables under `output/03_model_biology/02_archs4/`. |
+| Supplement 5 | ARCHS4 projection aggregate results, model loadings under `output/98_final_models/`, projection benchmark results, and pathway GMT/marker files under `data/pathways/` (or the sibling `clamp-analyses/data/pathways/`). The notebook regenerates its own `source_data` files. |
+| Supplement 6 | Drug-disease prediction pickle and per-tissue comparison tables under `output/03_model_biology/02_archs4/02_drug_diseases_canonical/`; the notebook converts the pickle with the environment's Python. |
+| Supplement 7 | CRISPR-Cas9 results under `output/03_model_biology/02_archs4/04_crispercas/`. |
+
+Figure 4 is not part of this notebook set; there is no `fig4.ipynb` in
+`nbs/99_panels/`.
+
 ## Citation
 
 ## License
